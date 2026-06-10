@@ -108,6 +108,8 @@ const PRICE_ATTRIBUTE_SELECTORS = [
 ];
 const LICENSE_ACTION_REVEAL_DELAY_MS = 120;
 const ADD_LIBRARY_PROXIMITY_RADIUS_PX = 260;
+const MUTATION_PROCESS_DEBOUNCE_MS = 175;
+const MUTATION_PROCESS_IDLE_TIMEOUT_MS = 700;
 const SKIP_LIBRARY_BUTTON_PATTERNS = [
   /\balready\s+in\s+library\b/i,
   /\bin\s+library\b/i,
@@ -1786,16 +1788,50 @@ function isBetterFabOnlyMutation(mutation) {
     changedNodes.every((node) => isBetterFabManagedNode(node));
 }
 
-let debounceTimeout;
+let debounceTimeout = null;
+let idleCallbackId = null;
+
+function clearScheduledProcessItems() {
+  if (debounceTimeout !== null) {
+    clearTimeout(debounceTimeout);
+    debounceTimeout = null;
+  }
+
+  if (
+    idleCallbackId !== null &&
+    typeof window.cancelIdleCallback === "function"
+  ) {
+    window.cancelIdleCallback(idleCallbackId);
+    idleCallbackId = null;
+  }
+}
+
+function scheduleProcessItemsFromMutation() {
+  clearScheduledProcessItems();
+  debounceTimeout = setTimeout(() => {
+    debounceTimeout = null;
+
+    if (typeof window.requestIdleCallback === "function") {
+      idleCallbackId = window.requestIdleCallback(
+        () => {
+          idleCallbackId = null;
+          void processItems();
+        },
+        { timeout: MUTATION_PROCESS_IDLE_TIMEOUT_MS },
+      );
+      return;
+    }
+
+    void processItems();
+  }, MUTATION_PROCESS_DEBOUNCE_MS);
+}
+
 const observer = new MutationObserver((mutations) => {
   if (mutations.every((mutation) => isBetterFabOnlyMutation(mutation))) {
     return;
   }
 
-  clearTimeout(debounceTimeout);
-  debounceTimeout = setTimeout(() => {
-    void processItems();
-  }, 100);
+  scheduleProcessItemsFromMutation();
 });
 
 observer.observe(document.body, {
