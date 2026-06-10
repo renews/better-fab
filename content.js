@@ -1,7 +1,6 @@
 let config = {
   filterActive: true,
   hiddenSellers: [],
-  sellerFilterActive: true,
   applySellerFilterInLibrary: false,
   applySavedFilterOnSellerPage: true,
   minimumReviewCount: 0,
@@ -16,6 +15,7 @@ let config = {
     "rated-4plus-3-reviews": false,
     "plugins-only": false,
   },
+  extensionActive: true,
 };
 
 const STAR_SORT_INDICATOR = /rating|reviews?|stars?/i;
@@ -30,6 +30,9 @@ const STAR_SORT_QUERY_FRAGMENT = "ratings.averagerating";
 const THUMBNAIL_SELECTOR = ".fabkit-Thumbnail-root";
 const PRODUCT_LINK_SELECTOR =
   'a[href^="/products/"], a[href*="://www.fab.com/products/"], a[href*="://fab.com/products/"]';
+const LISTING_LINK_SELECTOR =
+  'a[href^="/listings/"], a[href*="://www.fab.com/listings/"], a[href*="://fab.com/listings/"]';
+const PRODUCT_OR_LISTING_LINK_SELECTOR = `${PRODUCT_LINK_SELECTOR}, ${LISTING_LINK_SELECTOR}`;
 const IGNORE_SELLER_CARD_CLASS = "better-fab-ignore-seller-card";
 const IGNORE_SELLER_BUTTON_CLASS = "better-fab-ignore-seller-btn";
 const SELLER_PROFILE_CLASS = "better-fab-seller-profile";
@@ -51,8 +54,15 @@ const PRESET_KEYWORDS = {
     /(?:^|[\s-])ai[-\s](?:art|assets?|model|generator|generated|generated-content)(?:\b|$)|\/channels\/ai\b/i,
   sale: /\b(?:\d{1,3}\s*%\s*off|on\s+sale|save\s+[\w\d%+.-]+\s*|\bdiscount\b|reduced|now\s+\$\s*\d|was\s+\$\s*\d|price.?dropped)\b/i,
   plugin: /\bplugins?\b|\bplug-?in\b/i,
-  pluginPath: /\/products?\/[^/?#]*plug(?:-?|_)?ins?[^/?#]*/i,
+  pluginPath:
+    /\/(?:products?|listings)\/[^/?#]*plug(?:-?|_)?ins?[^/?#]*/i,
+  pluginCategory: /\bplugin|plug-?in\b/i,
 };
+const LISTING_PLUGIN_CACHE = new Map();
+const LISTING_PLUGIN_TEXT_MARKERS = [
+  /\btools?\s*(?:&|&amp;|and)\s*plugins?\b/i,
+  /\bplugin(s)?\b/i,
+];
 
 const FILTER_PRESETS = [
   {
@@ -79,11 +89,23 @@ const FILTER_PRESETS = [
   {
     id: "plugins-only",
     type: "include",
-    matches: (metrics) =>
-      PRESET_KEYWORDS.plugin.test(metrics.searchText) ||
-      PRESET_KEYWORDS.pluginPath.test(metrics.productPath || ""),
+    matches: async (metrics) => isPluginsOnlyMatch(metrics),
   },
 ];
+
+function normalizeListingPath(path) {
+  if (!path) return "";
+
+  try {
+    return new URL(path, window.location.origin).pathname.toLowerCase();
+  } catch (err) {
+    return String(path || "")
+      .trim()
+      .toLowerCase()
+      .split("?")[0]
+      .split("#")[0];
+  }
+}
 
 function sanitizeList(values) {
   if (!Array.isArray(values)) return [];
@@ -115,29 +137,26 @@ function hasActivePreset(id) {
   return Boolean(config.activeFilterPresets?.[id]);
 }
 
-function isHiddenByFilterPresets(metrics) {
-  const hasActiveIncludes = FILTER_PRESETS.some(
+async function isHiddenByFilterPresets(metrics) {
+  const includes = FILTER_PRESETS.filter(
     (preset) => preset.type === "include" && hasActivePreset(preset.id),
   );
+  const excludes = FILTER_PRESETS.filter(
+    (preset) => preset.type === "exclude" && hasActivePreset(preset.id),
+  );
 
-  if (
-    FILTER_PRESETS.some(
-      (preset) =>
-        preset.type === "exclude" &&
-        hasActivePreset(preset.id) &&
-        preset.matches(metrics),
-    )
-  ) {
-    return true;
+  for (const preset of excludes) {
+    if (await preset.matches(metrics)) return true;
   }
 
-  if (!hasActiveIncludes) return false;
+  if (includes.length === 0) return false;
 
-  return FILTER_PRESETS.every((preset) =>
-    preset.type === "include" && hasActivePreset(preset.id)
-      ? preset.matches(metrics)
-      : true,
-  );
+  for (const preset of includes) {
+    const result = await preset.matches(metrics);
+    if (!result) return true;
+  }
+
+  return false;
 }
 
 function getSellerLink(card) {
@@ -167,7 +186,7 @@ function getCardText(card) {
   let text = card.textContent || "";
 
   const attrElements = card.querySelectorAll(
-    "[aria-label], [title], [alt], [data-tip], [data-value]",
+    "[aria-label], [title], [alt], [data-tip], [data-value], [data-type], [data-category], [data-kind], [data-item-type], [data-tags]",
   );
 
   attrElements.forEach((element) => {
@@ -289,8 +308,8 @@ function getCardFromListingNode(listingNode) {
   let attempts = 0;
 
   while (node && node !== document.body && attempts < 16) {
-    const siblingLinks =
-      node.querySelectorAll?.(PRODUCT_LINK_SELECTOR).length || 0;
+    const siblingLinks = node.querySelectorAll?.(PRODUCT_LINK_SELECTOR)
+      .length || 0;
     const childThumbnails =
       node.querySelectorAll?.(THUMBNAIL_SELECTOR).length || 0;
     const hasText = (node.textContent || "").trim().length > 0;
@@ -302,6 +321,7 @@ function getCardFromListingNode(listingNode) {
         (siblingLinks === 1 && isCardContainer) ||
         node.matches?.(PRODUCT_LINK_SELECTOR))
     ) {
+      if (node.matches?.(PRODUCT_LINK_SELECTOR)) return node.parentElement || node;
       return node;
     }
 
@@ -314,25 +334,118 @@ function getCardFromListingNode(listingNode) {
 
 function getCardMetrics(card) {
   const cardText = getCardText(card);
-  const productLink = card.querySelector(PRODUCT_LINK_SELECTOR);
-  const productPath = (() => {
-    if (!productLink?.getAttribute) return "";
-    const href = productLink.getAttribute("href");
-    if (!href) return "";
+  const productLink = card.querySelector(PRODUCT_OR_LISTING_LINK_SELECTOR);
 
+  const getPathFromHref = (href) => {
+    if (!href) return "";
     try {
       return new URL(href, window.location.origin).pathname.toLowerCase();
     } catch (err) {
       return "";
     }
+  };
+
+  const productPath = productLink?.getAttribute
+    ? getPathFromHref(productLink.getAttribute("href"))
+    : "";
+  const pluginMetaText = (() => {
+    const metaElements = card.querySelectorAll(
+      "[aria-label], [title], [data-type], [data-category], [data-kind], [data-item-type], [data-tags]",
+    );
+    const metaParts = [];
+    metaElements.forEach((element) => {
+      [
+        "aria-label",
+        "title",
+        "data-type",
+        "data-category",
+        "data-kind",
+        "data-item-type",
+        "data-tags",
+      ].forEach((attribute) => {
+        const attr = element.getAttribute(attribute);
+        if (attr) metaParts.push(String(attr).toLowerCase());
+      });
+
+      if (element.textContent?.trim()) {
+        metaParts.push(element.textContent.trim().toLowerCase());
+      }
+    });
+
+    return metaParts.join(" ");
   })();
+
   return {
     sellerName: getSellerName(card),
     reviewCount: parseReviewCount(cardText),
     rating: parseRating(cardText),
     productPath,
+    pluginMetaText,
     searchText: cardText,
   };
+}
+
+function isPluginsOnlyTextMatch(metrics) {
+  return (
+    PRESET_KEYWORDS.plugin.test(metrics.searchText) ||
+    PRESET_KEYWORDS.pluginPath.test(metrics.productPath || "") ||
+    PRESET_KEYWORDS.pluginCategory.test(metrics.pluginMetaText || "")
+  );
+}
+
+function extractListingPath(metrics) {
+  return normalizeListingPath(metrics.productPath || "");
+}
+
+function hasPluginMarkerInText(htmlText) {
+  const normalizedText = String(htmlText || "").toLowerCase();
+  return LISTING_PLUGIN_TEXT_MARKERS.some((pattern) =>
+    pattern.test(normalizedText),
+  );
+}
+
+async function isListingKnownToBePlugin(listingPath) {
+  const normalizedPath = extractListingPath({ productPath: listingPath });
+  if (!normalizedPath || !normalizedPath.startsWith("/listings/")) return false;
+
+  const cached = LISTING_PLUGIN_CACHE.get(normalizedPath);
+  if (cached !== undefined) return cached;
+
+  const resolveCheck = (async () => {
+    try {
+      const response = await fetch(`${window.location.origin}${normalizedPath}`, {
+        credentials: "include",
+      });
+      if (!response.ok) return false;
+
+      const htmlText = await response.text();
+      if (hasPluginMarkerInText(htmlText)) return true;
+
+      try {
+        const parsedDoc = new DOMParser().parseFromString(htmlText, "text/html");
+        const titleText = parsedDoc.querySelector("title")?.textContent || "";
+        if (hasPluginMarkerInText(titleText)) return true;
+        return hasPluginMarkerInText(parsedDoc.body?.textContent || "");
+      } catch (err) {
+        return false;
+      }
+    } catch (err) {
+      return false;
+    }
+  })();
+
+  LISTING_PLUGIN_CACHE.set(normalizedPath, resolveCheck);
+  const isPlugin = await resolveCheck;
+  LISTING_PLUGIN_CACHE.set(normalizedPath, isPlugin);
+  return isPlugin;
+}
+
+async function isPluginsOnlyMatch(metrics) {
+  if (!metrics) return false;
+  if (isPluginsOnlyTextMatch(metrics)) return true;
+
+  if (!extractListingPath(metrics)) return false;
+  return isListingKnownToBePlugin(extractListingPath(metrics));
 }
 
 function normalizeSortText(value) {
@@ -404,7 +517,7 @@ async function addSellerToIgnoreList(sellerName) {
 
   config.hiddenSellers = nextHiddenSellers;
   await chrome.storage.local.set({ hiddenSellers: nextHiddenSellers });
-  processItems();
+  void processItems();
 }
 
 function updateSellerPageIgnoreButton(button, sellerName) {
@@ -778,7 +891,19 @@ function applyStarReviewSort(entries) {
   });
 }
 
-function processItems() {
+function disableExtensionManipulations(listingNodes) {
+  listingNodes.forEach((item) => {
+    const card = getCardFromListingNode(item);
+    if (!card) return;
+    card.classList.remove("fab-hidden-item");
+    removeIgnoreSellerButton(card);
+  });
+
+  const existingProfile = document.querySelector(`.${SELLER_PROFILE_CLASS}`);
+  existingProfile?.remove();
+}
+
+async function processItems() {
   const pathname = window.location.pathname;
   const isHomePage = pathname === "/";
   const isLimitedTimeFreePage = pathname.startsWith("/limited-time-free");
@@ -792,10 +917,20 @@ function processItems() {
   const entries = [];
   const processedCards = new Set();
 
-  listingNodes.forEach((item, index) => {
+  if (!config.extensionActive) {
+    disableExtensionManipulations(listingNodes);
+    return;
+  }
+
+  for (const [index, item] of listingNodes.entries()) {
+    if (!config.extensionActive) {
+      disableExtensionManipulations(listingNodes);
+      return;
+    }
+
     const card = getCardFromListingNode(item);
-    if (!card) return;
-    if (processedCards.has(card)) return;
+    if (!card) continue;
+    if (processedCards.has(card)) continue;
     processedCards.add(card);
 
     let shouldHide = false;
@@ -808,7 +943,6 @@ function processItems() {
 
     if (!shouldBypassFilters) {
       let shouldRunSavedFilter = config.filterActive;
-      if (isLibraryPage) shouldRunSavedFilter = false;
       if (isSellerPage && !config.applySavedFilterOnSellerPage) {
         shouldRunSavedFilter = false;
       }
@@ -820,11 +954,8 @@ function processItems() {
         if (isSaved) shouldHide = true;
       }
 
-      let shouldRunSellerFilter = config.sellerFilterActive;
-      if (isLibraryPage && !config.applySellerFilterInLibrary) {
-        shouldRunSellerFilter = false;
-      }
-      if (isSellerPage) shouldRunSellerFilter = false;
+      const shouldRunSellerFilter = !isSellerPage &&
+        (!isLibraryPage || config.applySellerFilterInLibrary);
 
       if (!shouldHide && shouldRunSellerFilter) {
         if (config.hiddenSellers.includes(metrics.sellerName)) {
@@ -838,7 +969,7 @@ function processItems() {
         shouldHide = true;
       }
 
-      if (!shouldHide && isHiddenByFilterPresets(metrics)) {
+      if (!shouldHide && (await isHiddenByFilterPresets(metrics))) {
         shouldHide = true;
       }
     }
@@ -854,7 +985,7 @@ function processItems() {
       metrics,
       index,
     });
-  });
+  }
 
   ensureSellerProfile(isSellerPage, entries);
 
@@ -867,7 +998,6 @@ chrome.storage.local
   .get([
     "filterActive",
     "hiddenSellers",
-    "sellerFilterActive",
     "applySellerFilterInLibrary",
     "applySavedFilterOnSellerPage",
     "minimumReviewCount",
@@ -877,13 +1007,12 @@ chrome.storage.local
     "starSortModeSelector",
     "starSortModeMatch",
     "activeFilterPresets",
+    "extensionActive",
   ])
   .then((data) => {
     if (data.filterActive !== undefined) config.filterActive = data.filterActive;
     if (data.hiddenSellers !== undefined)
       config.hiddenSellers = sanitizeList(data.hiddenSellers);
-    if (data.sellerFilterActive !== undefined)
-      config.sellerFilterActive = data.sellerFilterActive;
     if (data.applySellerFilterInLibrary !== undefined)
       config.applySellerFilterInLibrary = data.applySellerFilterInLibrary;
     if (data.applySavedFilterOnSellerPage !== undefined)
@@ -907,14 +1036,16 @@ chrome.storage.local
         data.activeFilterPresets,
       );
     }
-    processItems();
+    if (data.extensionActive !== undefined) {
+      config.extensionActive = data.extensionActive;
+    }
+    void processItems();
   });
 
 chrome.runtime.onMessage.addListener((request) => {
   if (request.action === "update_filters") {
     config.filterActive = request.filterActive;
     config.hiddenSellers = sanitizeList(request.hiddenSellers);
-    config.sellerFilterActive = request.sellerFilterActive;
     config.applySellerFilterInLibrary = request.applySellerFilterInLibrary;
     config.applySavedFilterOnSellerPage = request.applySavedFilterOnSellerPage;
     config.minimumReviewCount = Number.parseInt(request.minimumReviewCount, 10) || 0;
@@ -930,12 +1061,20 @@ chrome.runtime.onMessage.addListener((request) => {
       typeof request.starSortModeMatch === "string"
         ? request.starSortModeMatch.trim().toLowerCase()
         : "";
-    processItems();
+    if (typeof request.extensionActive === "boolean") {
+      config.extensionActive = request.extensionActive;
+    }
+    void processItems();
   }
 
   if (request.action === "update_state") {
-    config.filterActive = request.state;
-    processItems();
+    if (typeof request.state === "boolean") {
+      config.filterActive = request.state;
+    }
+    if (typeof request.extensionActive === "boolean") {
+      config.extensionActive = request.extensionActive;
+    }
+    void processItems();
   }
 
 });
@@ -953,19 +1092,25 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       changes.activeFilterPresets.newValue,
     );
   }
+  if (changes.extensionActive) {
+    config.extensionActive = Boolean(changes.extensionActive.newValue);
+  }
   if (
     !changes.hiddenSellers &&
     !changes.hiddenKeywords &&
-    !changes.activeFilterPresets
+    !changes.activeFilterPresets &&
+    !changes.extensionActive
   )
     return;
-  processItems();
+  void processItems();
 });
 
 let debounceTimeout;
 const observer = new MutationObserver(() => {
   clearTimeout(debounceTimeout);
-  debounceTimeout = setTimeout(processItems, 100);
+  debounceTimeout = setTimeout(() => {
+    void processItems();
+  }, 100);
 });
 
 observer.observe(document.body, {
