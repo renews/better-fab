@@ -1,0 +1,43 @@
+{
+"update_url": "https://clients2.google.com/service/update2/crx",
+
+  "manifest_version": 3,
+  "name": "Better Fab",
+  "version": "1.0.0",
+  "description": "Improves Fab.com browsing with saved-item, seller, keyword, review-count, and sorting filters",
+  "permissions": ["storage", "downloads"],
+  "host_permissions": ["*://*.fab.com/*", "*://www.fab.com/*"],
+  "icons": {
+    "16": "logo16.png",
+    "48": "logo48.png",
+    "128": "logo128.png"
+  },
+  "action": {
+    "default_title": "Better Fab",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "logo16.png",
+      "48": "logo48.png",
+      "128": "logo128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.fab.com/*", "*://www.fab.com/*"],
+      "css": ["styles.css"],
+      "js": ["content.js"]
+    }
+  ],
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Open Better Fab"
+    }
+  }
+}
