@@ -87,6 +87,64 @@
             .list-actions button:hover {
                 background: #444;
             }
+
+            .preset-action-btn {
+                font-weight: 800;
+                letter-spacing: 0.15px;
+                transition:
+                    transform 120ms ease,
+                    box-shadow 120ms ease,
+                    opacity 120ms ease;
+            }
+
+            .preset-action-btn:disabled {
+                opacity: 0.32;
+                cursor: not-allowed;
+            }
+
+            .apply-btn {
+                background: #1e8e3e;
+            }
+
+            .apply-btn:hover {
+                background: #19742f;
+            }
+
+            .disable-btn {
+                background: #b53030;
+            }
+
+            .disable-btn:hover {
+                background: #8f2626;
+            }
+
+            .extension-state {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 100%;
+                font-size: 12px;
+                font-weight: 700;
+                letter-spacing: 0.2px;
+                text-transform: uppercase;
+                margin: 6px 0 10px;
+                padding: 6px 8px;
+                border-radius: 6px;
+                box-sizing: border-box;
+                border: 1px solid transparent;
+            }
+
+            .extension-state.active {
+                background: rgba(30, 142, 62, 0.24);
+                color: #77d489;
+                border-color: rgba(30, 142, 62, 0.45);
+            }
+
+            .extension-state.inactive {
+                background: rgba(181, 48, 48, 0.18);
+                color: #ff8a8a;
+                border-color: rgba(181, 48, 48, 0.4);
+            }
             .hidden-file-input {
                 display: none;
             }
@@ -130,10 +188,6 @@
                 <input type="checkbox" id="toggle-saved-seller-page" />
             </div>
             <div class="toggle-row">
-                <span>Enable Seller Filter</span>
-                <input type="checkbox" id="toggle-seller-filter" />
-            </div>
-            <div class="toggle-row">
                 <span>Show Hide Seller Buttons</span>
                 <input type="checkbox" id="toggle-hide-seller-buttons" />
             </div>
@@ -155,7 +209,22 @@
                 />
             </div>
             <h3 style="margin-top: 16px">Filter Presets</h3>
+            <div id="extension-state" class="extension-state inactive">Extension: Inactive</div>
             <div id="preset-list" class="preset-list"></div>
+            <div class="list-actions">
+                <button
+                    id="apply-presets-btn"
+                    class="preset-action-btn apply-btn"
+                >
+                    Activate
+                </button>
+                <button
+                    id="disable-presets-btn"
+                    class="preset-action-btn disable-btn"
+                >
+                    Inactivate
+                </button>
+            </div>
 
             <h3 style="margin-top: 16px">Hidden Sellers</h3>
             <div style="display: flex; gap: 8px">

@@ -11,7 +11,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 	const toggleSavedSellerPage = document.getElementById(
 		"toggle-saved-seller-page",
 	);
-	const toggleSellerFilter = document.getElementById("toggle-seller-filter");
 	const toggleHideSellerButtons = document.getElementById(
 		"toggle-hide-seller-buttons",
 	);
@@ -21,6 +20,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	);
 	const minReviewsInput = document.getElementById("min-reviews-input");
 	const presetList = document.getElementById("preset-list");
+	const extensionState = document.getElementById("extension-state");
 
 	const PRESET_DEFINITIONS = [
 		{ id: "no-ai", label: "No AI-generated content" },
@@ -50,7 +50,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 	let data = await chrome.storage.local.get([
 		"filterActive",
 		"hiddenSellers",
-		"sellerFilterActive",
 		"applySellerFilterInLibrary",
 		"applySavedFilterOnSellerPage",
 		"sortStarsByReviewCount",
@@ -58,10 +57,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 		"minimumReviewCount",
 		"hiddenKeywords",
 		"activeFilterPresets",
+		"extensionActive",
 	]);
 
 	let filterActive = data.filterActive !== false;
-	let sellerFilterActive = data.sellerFilterActive !== false;
 	let applySellerFilterInLibrary = data.applySellerFilterInLibrary === true;
 	let applySavedFilterOnSellerPage =
 		data.applySavedFilterOnSellerPage !== false;
@@ -75,10 +74,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 	let hiddenSellers = data.hiddenSellers || [];
 	let hiddenKeywords = data.hiddenKeywords || [];
 	let activeFilterPresets = sanitizePresetState(data.activeFilterPresets);
+	let extensionActive =
+		typeof data.extensionActive === "boolean"
+			? data.extensionActive
+			: data.filterActive !== false;
 
 	toggleSaved.checked = filterActive;
 	toggleSavedSellerPage.checked = applySavedFilterOnSellerPage;
-	toggleSellerFilter.checked = sellerFilterActive;
 	toggleHideSellerButtons.checked = showHideSellerButtons;
 	toggleLibrarySeller.checked = applySellerFilterInLibrary;
 	toggleStarReviewSort.checked = sortStarsByReviewCount;
@@ -86,23 +88,26 @@ document.addEventListener("DOMContentLoaded", async () => {
 	renderPresetList();
 	renderList(sellerList, hiddenSellers, onSellerRemoved);
 	renderList(keywordList, hiddenKeywords, onKeywordRemoved);
+	const applyPresetBtn = document.getElementById("apply-presets-btn");
+	const disablePresetBtn = document.getElementById("disable-presets-btn");
+	setExtensionButtons(extensionActive);
 
 	async function broadcastUpdate() {
 		const tabs = await chrome.tabs.query({ url: "*://*.fab.com/*" });
 		for (const t of tabs) {
 			chrome.tabs
-				.sendMessage(t.id, {
-					action: "update_filters",
-					filterActive,
-					hiddenSellers,
-					sellerFilterActive,
-					applySellerFilterInLibrary,
+					.sendMessage(t.id, {
+						action: "update_filters",
+						filterActive,
+						hiddenSellers,
+						applySellerFilterInLibrary,
 					applySavedFilterOnSellerPage,
 					sortStarsByReviewCount,
 					showHideSellerButtons,
 					minimumReviewCount,
 					hiddenKeywords,
 					activeFilterPresets,
+					extensionActive,
 				})
 				.catch(() => {});
 		}
@@ -112,7 +117,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 		await chrome.storage.local.set({
 			filterActive,
 			hiddenSellers,
-			sellerFilterActive,
 			applySellerFilterInLibrary,
 			applySavedFilterOnSellerPage,
 			sortStarsByReviewCount,
@@ -120,7 +124,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 			minimumReviewCount,
 			hiddenKeywords,
 			activeFilterPresets,
+			extensionActive,
 		});
+	}
+
+	function setExtensionButtons(isActive) {
+		applyPresetBtn.disabled = isActive;
+		disablePresetBtn.disabled = !isActive;
+		extensionState.textContent = isActive
+			? "Extension: Active"
+			: "Extension: Inactive";
+		extensionState.classList.toggle("active", isActive);
+		extensionState.classList.toggle("inactive", !isActive);
 	}
 
 	function renderList(listElement, items, onRemove) {
@@ -178,10 +193,27 @@ document.addEventListener("DOMContentLoaded", async () => {
 				await broadcastUpdate();
 			});
 
-			row.append(label, checkbox);
-			presetList.appendChild(row);
-		});
+		row.append(label, checkbox);
+		presetList.appendChild(row);
+	});
 	}
+
+	async function applyPresetSelection() {
+		extensionActive = true;
+		await updateStorage();
+		await broadcastUpdate();
+		setExtensionButtons(extensionActive);
+	}
+
+	async function clearPresetSelection() {
+		extensionActive = false;
+		await updateStorage();
+		setExtensionButtons(extensionActive);
+		await broadcastUpdate();
+	}
+
+	applyPresetBtn.addEventListener("click", applyPresetSelection);
+	disablePresetBtn.addEventListener("click", clearPresetSelection);
 
 	async function onSellerRemoved(seller) {
 		hiddenSellers = hiddenSellers.filter((s) => s !== seller);
@@ -336,12 +368,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 		await broadcastUpdate();
 	});
 
-	toggleSellerFilter.addEventListener("change", async (e) => {
-		sellerFilterActive = e.target.checked;
-		await updateStorage();
-		await broadcastUpdate();
-	});
-
 	toggleHideSellerButtons.addEventListener("change", async (e) => {
 		showHideSellerButtons = e.target.checked;
 		await updateStorage();
@@ -358,6 +384,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 		sortStarsByReviewCount = e.target.checked;
 		await updateStorage();
 		await broadcastUpdate();
+	});
+
+	chrome.storage.onChanged.addListener((changes, areaName) => {
+		if (areaName !== "local") return;
+		if (changes.extensionActive) {
+			extensionActive = Boolean(changes.extensionActive.newValue);
+			setExtensionButtons(extensionActive);
+		}
 	});
 
 	minReviewsInput.addEventListener("change", async () => {
