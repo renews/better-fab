@@ -22,6 +22,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 	const presetList = document.getElementById("preset-list");
 	const extensionState = document.getElementById("extension-state");
 	const addFreeLibraryBtn = document.getElementById("add-free-library-btn");
+	const addFreeLibraryDefaultLabel = addFreeLibraryBtn
+		? addFreeLibraryBtn.textContent
+		: "Add visible free items to library";
+	let isAddingVisibleFreeItems = false;
 
 	const PRESET_DEFINITIONS = [
 		{ id: "no-ai", label: "No AI-generated content" },
@@ -42,6 +46,20 @@ document.addEventListener("DOMContentLoaded", async () => {
 	const keywordInput = document.getElementById("keyword-input");
 	const addKeywordBtn = document.getElementById("add-keyword-btn");
 	const keywordList = document.getElementById("keyword-list");
+
+	const presetControls = [
+		toggleSaved,
+		toggleSavedSellerPage,
+		toggleHideSellerButtons,
+		toggleLibrarySeller,
+		toggleStarReviewSort,
+		sellerInput,
+		addSellerBtn,
+		keywordInput,
+		addKeywordBtn,
+		sellerList,
+		keywordList,
+	];
 
 	await chrome.storage.local.remove([
 		"starSortModeSelector",
@@ -91,6 +109,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	renderList(keywordList, hiddenKeywords, onKeywordRemoved);
 	const applyPresetBtn = document.getElementById("apply-presets-btn");
 	const disablePresetBtn = document.getElementById("disable-presets-btn");
+	presetControls.push(applyPresetBtn, disablePresetBtn);
 	setExtensionButtons(extensionActive);
 
 	async function broadcastUpdate() {
@@ -164,12 +183,38 @@ document.addEventListener("DOMContentLoaded", async () => {
 		});
 	}
 
-	const addVisibleFreeItemsToLibrary = async () => {
+	function setAddLibraryButtonState(isRunning) {
 		if (!addFreeLibraryBtn) return;
+		addFreeLibraryBtn.disabled = isRunning;
+		addFreeLibraryBtn.setAttribute("aria-disabled", String(Boolean(isRunning)));
+		addFreeLibraryBtn.style.pointerEvents = isRunning ? "none" : "";
+		addFreeLibraryBtn.textContent = isRunning
+			? "Adding..."
+			: addFreeLibraryDefaultLabel;
 
-		const originalText = addFreeLibraryBtn.textContent;
-		addFreeLibraryBtn.disabled = true;
-		addFreeLibraryBtn.textContent = "Adding...";
+		for (const control of presetControls) {
+			if (!control) continue;
+			if (isRunning && control.id === "disable-presets-btn") continue;
+			control.disabled = isRunning;
+		}
+
+		if (!presetList) return;
+		const presetInputs = presetList.querySelectorAll("input");
+		presetInputs.forEach((input) => {
+			input.disabled = isRunning;
+		});
+	}
+
+	const addVisibleFreeItemsToLibrary = async () => {
+		if (!addFreeLibraryBtn || isAddingVisibleFreeItems) return;
+
+		isAddingVisibleFreeItems = true;
+		setAddLibraryButtonState(true);
+		if (addFreeLibraryBtn.disabled !== true || addFreeLibraryBtn.style.pointerEvents !== "none") {
+			addFreeLibraryBtn.disabled = true;
+			addFreeLibraryBtn.style.pointerEvents = "none";
+		}
+
 		try {
 			const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 			if (!tab.id) {
@@ -194,13 +239,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 			alert(
 				`Visible free items processed: ${result.attempted}. ` +
 					`Added: ${result.added}. Already in library: ${result.alreadyInLibrary}. ` +
-					`Skipped: ${result.skipped}`,
+					`Failed to click: ${result.skipped || 0}. No action button: ${result.noActionButton || 0}`,
 			);
 		} catch (err) {
 			alert("Could not trigger adding free items. Open Fab tab and try again.");
 		} finally {
-			addFreeLibraryBtn.disabled = false;
-			addFreeLibraryBtn.textContent = originalText;
+			isAddingVisibleFreeItems = false;
+			setAddLibraryButtonState(false);
+			addFreeLibraryBtn.style.pointerEvents = "";
 		}
 	};
 
@@ -256,7 +302,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 	applyPresetBtn.addEventListener("click", applyPresetSelection);
 	disablePresetBtn.addEventListener("click", clearPresetSelection);
 	if (addFreeLibraryBtn) {
-		addFreeLibraryBtn.addEventListener("click", addVisibleFreeItemsToLibrary);
+		addFreeLibraryBtn.addEventListener(
+			"click",
+			(event) => {
+				if (isAddingVisibleFreeItems) {
+					event.preventDefault();
+					event.stopImmediatePropagation();
+					return;
+				}
+				void addVisibleFreeItemsToLibrary();
+			},
+			true,
+		);
 	}
 
 	async function onSellerRemoved(seller) {
