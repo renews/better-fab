@@ -17,6 +17,8 @@ let config = {
 };
 let processItemsRunId = 0;
 let processItemsAbortController = null;
+let lastProcessedListingSignature = "";
+let lastProcessItemsCompletedAt = 0;
 
 const STAR_SORT_INDICATOR = /rating|reviews?|stars?/i;
 const STAR_SORT_QUERY_KEYS = [
@@ -97,6 +99,7 @@ const LICENSE_ACTION_REVEAL_DELAY_MS = 120;
 const ADD_LIBRARY_PROXIMITY_RADIUS_PX = 260;
 const MUTATION_PROCESS_DEBOUNCE_MS = 175;
 const MUTATION_PROCESS_IDLE_TIMEOUT_MS = 700;
+const STABLE_LISTING_REPROCESS_INTERVAL_MS = 5000;
 const SKIP_LIBRARY_BUTTON_PATTERNS = [
   /\balready\s+in\s+library\b/i,
   /\bin\s+library\b/i,
@@ -1349,6 +1352,25 @@ function disableExtensionManipulations(listingNodes) {
   existingProfile?.remove();
 }
 
+function getListingSetSignature() {
+  const links = document.querySelectorAll(PRODUCT_OR_LISTING_LINK_SELECTOR);
+  const firstHref = links[0]?.getAttribute("href") || "";
+  const lastHref = links[links.length - 1]?.getAttribute("href") || "";
+
+  return [
+    window.location.pathname,
+    window.location.search,
+    links.length,
+    firstHref,
+    lastHref,
+  ].join("|");
+}
+
+function markListingSetProcessed(signature) {
+  lastProcessedListingSignature = signature;
+  lastProcessItemsCompletedAt = Date.now();
+}
+
 async function runWithConcurrency(items, limit, worker) {
   if (!items.length) return;
 
@@ -1381,6 +1403,7 @@ async function processItems() {
   const isSellerPage = pathname.startsWith("/sellers/");
 
   const shouldBypassFilters = isHomePage || isLimitedTimeFreePage;
+  const listingSetSignature = getListingSetSignature();
   const listingNodes = document.querySelectorAll(
     `${THUMBNAIL_SELECTOR}, ${PRODUCT_LINK_SELECTOR}`,
   );
@@ -1391,6 +1414,7 @@ async function processItems() {
 
   if (!config.extensionActive) {
     disableExtensionManipulations(listingNodes);
+    markListingSetProcessed(listingSetSignature);
     return;
   }
 
@@ -1481,6 +1505,7 @@ async function processItems() {
 
   if (!config.extensionActive) {
     disableExtensionManipulations(listingNodes);
+    markListingSetProcessed(listingSetSignature);
     return;
   }
 
@@ -1497,6 +1522,8 @@ async function processItems() {
   if (config.sortStarsByReviewCount && isStarSortActive()) {
     applyStarReviewSort(entries);
   }
+
+  markListingSetProcessed(listingSetSignature);
 }
 
 chrome.storage.local
@@ -1670,6 +1697,17 @@ function scheduleProcessItemsFromMutation() {
   clearScheduledProcessItems();
   debounceTimeout = setTimeout(() => {
     debounceTimeout = null;
+
+    if (!config.extensionActive) return;
+
+    const listingSetSignature = getListingSetSignature();
+    const timeSinceLastProcess = Date.now() - lastProcessItemsCompletedAt;
+    if (
+      listingSetSignature === lastProcessedListingSignature &&
+      timeSinceLastProcess < STABLE_LISTING_REPROCESS_INTERVAL_MS
+    ) {
+      return;
+    }
 
     if (typeof window.requestIdleCallback === "function") {
       idleCallbackId = window.requestIdleCallback(
