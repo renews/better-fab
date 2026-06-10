@@ -10,42 +10,50 @@ async function updateBadge(isActive) {
   });
 }
 
-// On first load, check storage and update the icon
-chrome.storage.local.get("filterActive").then((data) => {
-  const isActive = data.filterActive !== false;
-  updateBadge(isActive);
-});
+async function getExtensionState() {
+  const data = await chrome.storage.local.get(["extensionActive", "filterActive"]);
+  if (typeof data.extensionActive === "boolean") {
+    return data.extensionActive;
+  }
 
-// Listener for browser icon clicks
-chrome.action.onClicked.addListener(async () => {
-  const data = await chrome.storage.local.get("filterActive");
-  const newState = !(data.filterActive !== false);
+  return data.filterActive !== false;
+}
 
-  await chrome.storage.local.set({ filterActive: newState });
-  updateBadge(newState);
+async function setExtensionState(isActive) {
+  await chrome.storage.local.set({ extensionActive: isActive });
+  await updateBadge(isActive);
 
   const tabs = await chrome.tabs.query({ url: "*://*.fab.com/*" });
   for (const tab of tabs) {
     chrome.tabs
-      .sendMessage(tab.id, { action: "update_state", state: newState })
+      .sendMessage(tab.id, {
+        action: "update_state",
+        extensionActive: isActive,
+      })
       .catch(() => {});
   }
+}
+
+// On first load, check storage and update the icon
+getExtensionState().then(updateBadge);
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== "local") return;
+  if (!changes.extensionActive) return;
+
+  updateBadge(Boolean(changes.extensionActive.newValue));
+});
+
+// Listener for browser icon clicks
+chrome.action.onClicked.addListener(async () => {
+  const currentState = await getExtensionState();
+  await setExtensionState(!currentState);
 });
 
 // Listener for keyboard shortcuts
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === "_execute_action") {
-    const data = await chrome.storage.local.get("filterActive");
-    const newState = !(data.filterActive !== false);
-
-    await chrome.storage.local.set({ filterActive: newState });
-    updateBadge(newState);
-
-    const tabs = await chrome.tabs.query({ url: "*://*.fab.com/*" });
-    for (const tab of tabs) {
-      chrome.tabs
-        .sendMessage(tab.id, { action: "update_state", state: newState })
-        .catch(() => {});
-    }
+    const currentState = await getExtensionState();
+    await setExtensionState(!currentState);
   }
 });
