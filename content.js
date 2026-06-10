@@ -1148,11 +1148,25 @@ function ensureIgnoreSellerButton(card, sellerName) {
 
   if (!normalizedSeller || !sellerLink) {
     existingButton?.remove();
-    card.classList.remove(IGNORE_SELLER_CARD_CLASS);
+    if (card.classList.contains(IGNORE_SELLER_CARD_CLASS)) {
+      card.classList.remove(IGNORE_SELLER_CARD_CLASS);
+    }
     return;
   }
 
-  card.classList.add(IGNORE_SELLER_CARD_CLASS);
+  const currentSellerRow = sellerLink.closest(`.${SELLER_ROW_CLASS}`);
+  if (
+    existingButton?.dataset.seller === normalizedSeller &&
+    existingButton.nextElementSibling === sellerLink &&
+    existingButton.parentElement === currentSellerRow &&
+    card.classList.contains(IGNORE_SELLER_CARD_CLASS)
+  ) {
+    return;
+  }
+
+  if (!card.classList.contains(IGNORE_SELLER_CARD_CLASS)) {
+    card.classList.add(IGNORE_SELLER_CARD_CLASS);
+  }
   const legacyRowParent = sellerLink.parentElement;
   if (
     legacyRowParent?.classList.contains(SELLER_ROW_CLASS) &&
@@ -1161,7 +1175,7 @@ function ensureIgnoreSellerButton(card, sellerName) {
     legacyRowParent.classList.remove(SELLER_ROW_CLASS);
   }
 
-  let sellerRow = sellerLink.closest(`.${SELLER_ROW_CLASS}`);
+  let sellerRow = currentSellerRow;
   if (!sellerRow) {
     sellerRow = document.createElement("span");
     sellerRow.className = SELLER_ROW_CLASS;
