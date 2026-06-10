@@ -17,6 +17,34 @@ let config = {
 };
 let lastProcessedListingSignature = "";
 let lastProcessItemsCompletedAt = 0;
+let hiddenSellerSet = new Set();
+let activeIncludeFilterPresets = [];
+let activeExcludeFilterPresets = [];
+let hasActiveFilterPresets = false;
+let filterSettingsVersion = 0;
+let cardContentVersion = 0;
+let sellerProfileElement = null;
+let needsExtensionCleanup = false;
+let potentialStarSortWorkCache = {
+  signature: "",
+  value: false,
+};
+let potentialCardProcessingWorkCache = {
+  pathname: "",
+  filterSettingsVersion: -1,
+  potentialStarSortWork: null,
+  isSellerPage: null,
+  showHideSellerButtons: null,
+  value: false,
+};
+let knownStarSortQueryModeCache = {
+  search: "",
+  value: false,
+};
+let configuredQueryMatchCache = {
+  signature: "",
+  value: null,
+};
 
 const STAR_SORT_INDICATOR = /rating|reviews?|stars?/i;
 const STAR_SORT_QUERY_KEYS = [
@@ -26,8 +54,10 @@ const STAR_SORT_QUERY_KEYS = [
   "order_by",
   "sortorder",
 ];
+const STAR_SORT_QUERY_KEY_SET = new Set(STAR_SORT_QUERY_KEYS);
 const STAR_SORT_QUERY_FRAGMENT = "ratings.averagerating";
-const THUMBNAIL_SELECTOR = ".fabkit-Thumbnail-root";
+const THUMBNAIL_CLASS = "fabkit-Thumbnail-root";
+const THUMBNAIL_SELECTOR = `.${THUMBNAIL_CLASS}`;
 const PRODUCT_LINK_SELECTOR =
   'a[href^="/products/"], a[href*="://www.fab.com/products/"], a[href*="://fab.com/products/"]';
 const LISTING_LINK_SELECTOR =
@@ -40,8 +70,39 @@ const SELLER_PROFILE_AVERAGE_CLASS = "better-fab-seller-profile-average";
 const SELLER_PROFILE_COUNT_CLASS = "better-fab-seller-profile-count";
 const SELLER_PAGE_BUTTON_CLASS = "better-fab-seller-page-ignore-btn";
 const SELLER_ROW_CLASS = "better-fab-seller-row";
+const IGNORE_SELLER_BUTTON_SELECTOR = `.${IGNORE_SELLER_BUTTON_CLASS}`;
+const SELLER_PROFILE_SELECTOR = `.${SELLER_PROFILE_CLASS}`;
+const SELLER_PROFILE_AVERAGE_SELECTOR = `.${SELLER_PROFILE_AVERAGE_CLASS}`;
+const SELLER_PROFILE_COUNT_SELECTOR = `.${SELLER_PROFILE_COUNT_CLASS}`;
+const SELLER_PAGE_BUTTON_SELECTOR = `.${SELLER_PAGE_BUTTON_CLASS}`;
+const SELLER_ROW_SELECTOR = `.${SELLER_ROW_CLASS}`;
+const SAVED_ITEM_SUCCESS_CLASS = "fabkit-Typography--intent-success";
+const SAVED_ITEM_ICON_CLASS = "edsicon-check-circle-filled";
+const CARD_TEXT_ATTRIBUTE_SELECTOR =
+  "[aria-label], [title], [alt], [data-tip], [data-value], [data-type], [data-category], [data-kind], [data-item-type], [data-tags]";
+const CARD_TEXT_ATTRIBUTES = [
+  "aria-label",
+  "title",
+  "alt",
+  "data-tip",
+  "data-value",
+];
 const FAB_RATING_COUNT_PATTERN =
   /(?:^|[^\d.])([0-5](?:\.\d+)?)\s*\((\d{1,3}(?:[.,]\d{3})+|\d+(?:\.\d+)?\s*[kKmM]|\d+)\)/i;
+const REVIEW_COUNT_PATTERNS = [
+  /\b[0-5](?:\.\d+)?\s*\((\d{1,3}(?:[.,]\d{3})+|\d+(?:\.\d+)?\s*[kKmM]|\d+)\)/i,
+  /(\d{1,3}(?:[.,]\d{3})+|\d+)\s*reviews?/i,
+  /(\d+(?:\.\d+)?\s*[kKmM])\s*reviews?/i,
+  /(\d{1,3}(?:[.,]\d{3})+|\d+)\s*ratings?/i,
+  /(\d+(?:\.\d+)?\s*[kKmM])\s*ratings?/i,
+  /\((\d{1,3}(?:[.,]\d{3})+|\d+)\s*reviews?\)/i,
+  /review[s]?\s*[:\-]?\s*(\d{1,3}(?:[.,]\d{3})+|\d+)/i,
+];
+const RATING_PATTERNS = [
+  /(?:^|\s|[^\d])([0-5](?:\.\d+)?)\s*\/\s*5\b/i,
+  /([0-5](?:\.\d+)?)\s*(?:out of|of)\s*5\s*stars?/i,
+  /([0-5](?:\.\d+)?)\s*stars?/i,
+];
 const PRESET_KEYWORDS = {
   ai: [
     /\bai[\s-]?generated\b/i,
@@ -54,10 +115,22 @@ const PRESET_KEYWORDS = {
     /(?:^|[\s-])ai[-\s](?:art|assets?|model|generator|generated|generated-content)(?:\b|$)|\/channels\/ai\b/i,
 };
 const CARD_METRICS_CACHE = new WeakMap();
+const CARD_SELLER_INFO_CACHE = new WeakMap();
+const CARD_FILTER_RESULT_CACHE = new WeakMap();
+const LISTING_NODE_CARD_CACHE = new WeakMap();
+const CARD_CONTENT_VERSION_CACHE = new WeakMap();
+const CARD_DOM_SIGNATURE_CACHE = new WeakMap();
+const EMPTY_ENTRIES = [];
 const LIBRARY_BUTTON_SELECTOR =
   "button, a[role='button'], [role='button'], [data-action], [data-testid], [data-test], a[href], [aria-label], [title]";
 const LIBRARY_ACTION_HINTS =
   /\b(add|add to|save|save to|saved|get|install|library|collection|wishlist|bookmark)\b/i;
+const LIBRARY_REVEAL_EVENT_TYPES = [
+  "pointerover",
+  "mouseover",
+  "mouseenter",
+  "mousemove",
+];
 const FREE_PRICE_PATTERNS = [
   /\$\s*0(?:[.,]\d{1,2})?\b/i,
   /\b0(?:[.,]\d{1,2})?\s*(?:usd|eur|gbp|aud|cad|nzd|brl|mxn|inr|jpy|krw|cny)?\b/i,
@@ -92,6 +165,7 @@ const PRICE_ATTRIBUTE_SELECTORS = [
   "[data-testid*='price']",
   "[itemprop='price']",
 ];
+const PRICE_ATTRIBUTE_SELECTOR = PRICE_ATTRIBUTE_SELECTORS.join(", ");
 const LICENSE_ACTION_REVEAL_DELAY_MS = 120;
 const ADD_LIBRARY_PROXIMITY_RADIUS_PX = 260;
 const MUTATION_PROCESS_DEBOUNCE_MS = 175;
@@ -108,13 +182,19 @@ const LICENSE_NO_MODAL_DEBOUNCE_MIN_MS = 50;
 const LICENSE_NO_MODAL_DEBOUNCE_MAX_MS = 150;
 const LICENSE_MODAL_WAIT_CLOSE_MAX_MS = 1200;
 
+function hasAiGeneratedKeywordMatch(searchText) {
+  for (const pattern of PRESET_KEYWORDS.ai) {
+    if (pattern.test(searchText)) return true;
+  }
+
+  return PRESET_KEYWORDS.aiUrlOrLabel.test(searchText);
+}
+
 const FILTER_PRESETS = [
   {
     id: "no-ai",
     type: "exclude",
-    matches: (metrics) =>
-      PRESET_KEYWORDS.ai.some((pattern) => pattern.test(metrics.searchText)) ||
-      PRESET_KEYWORDS.aiUrlOrLabel.test(metrics.searchText),
+    matches: (metrics) => hasAiGeneratedKeywordMatch(metrics.searchText),
   },
   {
     id: "rated-4plus-3-reviews",
@@ -143,10 +223,39 @@ function normalizeListingPath(path) {
 
 function sanitizeList(values) {
   if (!Array.isArray(values)) return [];
-  const sanitized = values
-    .map((value) => String(value || "").trim().toLowerCase())
-    .filter(Boolean);
-  return [...new Set(sanitized)];
+  const seen = new Set();
+  const sanitized = [];
+
+  for (const value of values) {
+    const normalized = String(value || "").trim().toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+
+    seen.add(normalized);
+    sanitized.push(normalized);
+  }
+
+  return sanitized;
+}
+
+function areListsEqual(left, right) {
+  if (left.length !== right.length) return false;
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+
+  return true;
+}
+
+function setHiddenSellers(values) {
+  const sanitized = sanitizeList(values);
+  config.hiddenSellers = sanitized;
+  hiddenSellerSet = new Set(sanitized);
+  return sanitized;
+}
+
+function markFilterSettingsChanged() {
+  filterSettingsVersion += 1;
 }
 
 function sanitizePresetState(rawState) {
@@ -159,10 +268,21 @@ function sanitizePresetState(rawState) {
     return defaults;
   }
 
-  return FILTER_PRESETS.reduce((state, preset) => {
-    state[preset.id] = Boolean(rawState[preset.id]);
-    return state;
-  }, defaults);
+  for (const preset of FILTER_PRESETS) {
+    defaults[preset.id] = Boolean(rawState[preset.id]);
+  }
+
+  return defaults;
+}
+
+function arePresetStatesEqual(left, right) {
+  for (const preset of FILTER_PRESETS) {
+    if (Boolean(left?.[preset.id]) !== Boolean(right?.[preset.id])) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function hasActivePreset(id) {
@@ -170,24 +290,35 @@ function hasActivePreset(id) {
 }
 
 function hasAnyActivePreset() {
-  return FILTER_PRESETS.some((preset) => hasActivePreset(preset.id));
+  return hasActiveFilterPresets;
+}
+
+function refreshActiveFilterPresetCache() {
+  activeIncludeFilterPresets = [];
+  activeExcludeFilterPresets = [];
+
+  for (const preset of FILTER_PRESETS) {
+    if (!hasActivePreset(preset.id)) continue;
+
+    if (preset.type === "include") {
+      activeIncludeFilterPresets.push(preset);
+    } else if (preset.type === "exclude") {
+      activeExcludeFilterPresets.push(preset);
+    }
+  }
+  hasActiveFilterPresets =
+    activeIncludeFilterPresets.length > 0 ||
+    activeExcludeFilterPresets.length > 0;
 }
 
 function isHiddenByFilterPresets(metrics) {
-  const includes = FILTER_PRESETS.filter(
-    (preset) => preset.type === "include" && hasActivePreset(preset.id),
-  );
-  const excludes = FILTER_PRESETS.filter(
-    (preset) => preset.type === "exclude" && hasActivePreset(preset.id),
-  );
-
-  for (const preset of excludes) {
+  for (const preset of activeExcludeFilterPresets) {
     if (preset.matches(metrics)) return true;
   }
 
-  if (includes.length === 0) return false;
+  if (activeIncludeFilterPresets.length === 0) return false;
 
-  for (const preset of includes) {
+  for (const preset of activeIncludeFilterPresets) {
     const result = preset.matches(metrics);
     if (!result) return true;
   }
@@ -195,14 +326,147 @@ function isHiddenByFilterPresets(metrics) {
   return false;
 }
 
-function getSellerLink(card) {
-  return card.querySelector('a[href^="/sellers/"]');
+refreshActiveFilterPresetCache();
+
+function hasSavedItemMarker(card) {
+  const icons = card.getElementsByClassName?.(SAVED_ITEM_ICON_CLASS);
+  if (!icons?.length) return false;
+
+  for (const icon of icons) {
+    let current = icon.parentElement;
+    while (current) {
+      if (current.classList?.contains(SAVED_ITEM_SUCCESS_CLASS)) return true;
+      if (current === card) break;
+      current = current.parentElement;
+    }
+  }
+
+  return false;
 }
 
-function getSellerName(card) {
-  const sellerLink = getSellerLink(card);
+function getCardContentVersion(card) {
+  return CARD_CONTENT_VERSION_CACHE.get(card) || 0;
+}
+
+function markCardContentChanged(card) {
+  if (!card) return;
+
+  cardContentVersion += 1;
+  CARD_CONTENT_VERSION_CACHE.set(card, cardContentVersion);
+  CARD_METRICS_CACHE.delete(card);
+  CARD_SELLER_INFO_CACHE.delete(card);
+  CARD_FILTER_RESULT_CACHE.delete(card);
+  CARD_DOM_SIGNATURE_CACHE.delete(card);
+}
+
+function getCardDomState(
+  card,
+  filterContextSignature,
+  includeListingMetadata,
+  includeSavedState = true,
+  knownHref = null,
+) {
+  const contentVersion = getCardContentVersion(card);
+  if (!includeListingMetadata && !includeSavedState) {
+    return {
+      signature: `${filterContextSignature}|saved-ignored|${contentVersion}`,
+      isSaved: false,
+    };
+  }
+
+  const cached = CARD_DOM_SIGNATURE_CACHE.get(card);
+  if (
+    cached?.contentVersion === contentVersion &&
+    (!includeListingMetadata || cached.hasListingMetadata) &&
+    (!includeSavedState || cached.hasSavedState)
+  ) {
+    return {
+      signature: `${filterContextSignature}|${cached.signature}`,
+      isSaved: cached.isSaved,
+    };
+  }
+
+  const isSaved = includeSavedState ? hasSavedItemMarker(card) : false;
+  const savedSignature = includeSavedState
+    ? isSaved ? "saved" : "not-saved"
+    : "saved-ignored";
+  let signature = `${savedSignature}|${contentVersion}`;
+
+  if (includeListingMetadata) {
+    const listingHref = knownHref === null
+      ? getFirstProductOrListingHref(card)
+      : knownHref;
+    const sellerInfo = getCardSellerInfo(card);
+    signature = `${listingHref}|${sellerInfo.sellerName}|${signature}`;
+  }
+
+  CARD_DOM_SIGNATURE_CACHE.set(card, {
+    contentVersion,
+    signature,
+    isSaved,
+    hasListingMetadata: includeListingMetadata,
+    hasSavedState: includeSavedState,
+  });
+
+  return {
+    signature: `${filterContextSignature}|${signature}`,
+    isSaved,
+  };
+}
+
+function getCachedCardFilterResult(card, cardDomSignature, needsFullMetrics = false) {
+  const cached = CARD_FILTER_RESULT_CACHE.get(card);
+  if (!cached) return null;
+  if (cached.version !== filterSettingsVersion) return null;
+  if (cached.signature !== cardDomSignature) return null;
+  if (needsFullMetrics && !cached.hasFullMetrics) return null;
+  return cached;
+}
+
+function setCachedCardFilterResult(
+  card,
+  cardDomSignature,
+  metrics,
+  shouldHide,
+  hasFullMetrics,
+) {
+  CARD_FILTER_RESULT_CACHE.set(card, {
+    version: filterSettingsVersion,
+    signature: cardDomSignature,
+    metrics,
+    shouldHide,
+    hasFullMetrics,
+  });
+}
+
+function getSellerLink(card) {
+  const links = card.getElementsByTagName?.("a");
+  if (!links) return null;
+
+  for (const link of links) {
+    if (link.getAttribute("href")?.startsWith("/sellers/")) return link;
+  }
+
+  return null;
+}
+
+function getSellerName(card, sellerLink = getSellerLink(card)) {
   if (!sellerLink) return "";
   return sellerLink.textContent.trim().toLowerCase();
+}
+
+function getCardSellerInfo(card) {
+  const contentVersion = getCardContentVersion(card);
+  const cached = CARD_SELLER_INFO_CACHE.get(card);
+  if (cached?.contentVersion === contentVersion) return cached.info;
+
+  const sellerLink = getSellerLink(card);
+  const info = {
+    sellerLink,
+    sellerName: getSellerName(card, sellerLink),
+  };
+  CARD_SELLER_INFO_CACHE.set(card, { contentVersion, info });
+  return info;
 }
 
 function getSellerNameFromPathname(pathname) {
@@ -221,31 +485,42 @@ function getSellerNameFromPathname(pathname) {
 function getCardText(card, initialText = null) {
   let text = initialText === null ? card.textContent || "" : initialText;
 
-  const attrElements = card.querySelectorAll(
-    "[aria-label], [title], [alt], [data-tip], [data-value], [data-type], [data-category], [data-kind], [data-item-type], [data-tags]",
-  );
+  const attrElements = card.querySelectorAll(CARD_TEXT_ATTRIBUTE_SELECTOR);
+  if (attrElements.length === 0) return text.toLowerCase();
+  const hasIgnoreSellerButton =
+    card.getElementsByClassName?.(IGNORE_SELLER_BUTTON_CLASS).length > 0;
 
-  attrElements.forEach((element) => {
-    if (element.closest(`.${IGNORE_SELLER_BUTTON_CLASS}`)) return;
+  for (const element of attrElements) {
+    if (
+      hasIgnoreSellerButton &&
+      element.closest(IGNORE_SELLER_BUTTON_SELECTOR)
+    ) continue;
 
-    ["aria-label", "title", "alt", "data-tip", "data-value"].forEach((attr) => {
+    for (const attr of CARD_TEXT_ATTRIBUTES) {
       const value = element.getAttribute(attr);
       if (value) text += ` ${value}`;
-    });
-  });
+    }
+  }
 
   return text.toLowerCase();
 }
 
+function hasFreePricePatternMatch(value) {
+  const text = String(value || "");
+  for (const pattern of FREE_PRICE_PATTERNS) {
+    if (pattern.test(text)) return true;
+  }
+
+  return false;
+}
+
 function isFreeByText(value) {
-  const text = String(value || "").toLowerCase();
-  return FREE_PRICE_PATTERNS.some((pattern) => pattern.test(text));
+  return hasFreePricePatternMatch(value);
 }
 
 function hasFreePriceFromCard(card, metrics) {
-  const search = String(metrics.searchText || "").toLowerCase();
-  const selector = PRICE_ATTRIBUTE_SELECTORS.join(", ");
-  const priceNodes = card.querySelectorAll(selector);
+  const search = metrics.searchText || "";
+  const priceNodes = card.querySelectorAll(PRICE_ATTRIBUTE_SELECTOR);
 
   for (const node of priceNodes) {
     const content = String(
@@ -256,7 +531,7 @@ function hasFreePriceFromCard(card, metrics) {
         "",
     ).toLowerCase();
 
-    if (FREE_PRICE_PATTERNS.some((pattern) => pattern.test(content))) return true;
+    if (hasFreePricePatternMatch(content)) return true;
   }
 
   if (/\b\$\s*0(?:[.,]\d{1,2})?\b|\bfree\b/.test(search)) return true;
@@ -283,7 +558,7 @@ function dispatchInteractionEvents(target) {
   const clientX = Math.max(1, rect.left + Math.min(rect.width, 1) / 2);
   const clientY = Math.max(1, rect.top + Math.min(rect.height, 1) / 2);
 
-  ["pointerover", "mouseover", "mouseenter", "mousemove"].forEach((type) => {
+  for (const type of LIBRARY_REVEAL_EVENT_TYPES) {
     target.dispatchEvent(
       new MouseEvent(type, {
         bubbles: true,
@@ -293,34 +568,29 @@ function dispatchInteractionEvents(target) {
         clientY,
       }),
     );
-  });
+  }
 }
 
 async function revealCardActionControls(card) {
   const host = card.closest("article, section, li, div") || card;
-  const targets = [
-    card,
-    card.querySelector(THUMBNAIL_SELECTOR),
-    card.querySelector(PRODUCT_OR_LISTING_LINK_SELECTOR),
-    host,
-  ];
+  const thumbnail = card.querySelector(THUMBNAIL_SELECTOR);
+  const listingLink = card.querySelector(PRODUCT_OR_LISTING_LINK_SELECTOR);
 
   for (let pass = 0; pass < 2; pass += 1) {
-    targets.forEach((target) => dispatchInteractionEvents(target));
+    dispatchInteractionEvents(card);
+    dispatchInteractionEvents(thumbnail);
+    dispatchInteractionEvents(listingLink);
+    dispatchInteractionEvents(host);
 
     const rect = card.getBoundingClientRect();
     if (rect.width > 0 && rect.height > 0) {
-      const points = [
-        [rect.left + rect.width / 2, rect.top + rect.height / 2],
-        [rect.left + 4, rect.top + 4],
-        [rect.right - 4, rect.top + 4],
-        [rect.left + 4, rect.bottom - 4],
-      ];
-
-      for (const [clientX, clientY] of points) {
-        const hovered = document.elementFromPoint(clientX, clientY);
-        dispatchInteractionEvents(hovered);
-      }
+      dispatchInteractionEvents(document.elementFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
+      ));
+      dispatchInteractionEvents(document.elementFromPoint(rect.left + 4, rect.top + 4));
+      dispatchInteractionEvents(document.elementFromPoint(rect.right - 4, rect.top + 4));
+      dispatchInteractionEvents(document.elementFromPoint(rect.left + 4, rect.bottom - 4));
     }
 
     await sleep(40);
@@ -330,24 +600,24 @@ async function revealCardActionControls(card) {
 }
 
 function isPriceFree(value) {
-  return FREE_PRICE_PATTERNS.some((pattern) =>
-    pattern.test(String(value || "").toLowerCase()),
-  );
+  return hasFreePricePatternMatch(value);
 }
 
 function getVisibleLicenseModal() {
-  const dialogs = Array.from(document.querySelectorAll(LICENSE_MODAL_SELECTOR));
+  const dialogs = document.querySelectorAll(LICENSE_MODAL_SELECTOR);
 
-  return dialogs.find((dialog) => {
-    if (!dialog?.isConnected) return false;
+  for (const dialog of dialogs) {
+    if (!dialog?.isConnected) continue;
 
     const titleElement = dialog.querySelector(LICENSE_MODAL_TITLE_SELECTOR);
     const legacyTitle = dialog.querySelector("h2");
     const titleText =
       String(titleElement?.textContent || legacyTitle?.textContent || "")
         .toLowerCase();
-    return titleText.includes("license tier");
-  }) || null;
+    if (titleText.includes("license tier")) return dialog;
+  }
+
+  return null;
 }
 
 async function waitForLicenseModal(timeoutMs = 900) {
@@ -373,57 +643,60 @@ async function waitForLicenseModalToClose(modal, timeoutMs = LICENSE_MODAL_WAIT_
   }
 }
 
-function getLicenseOptionsFromModal(modal) {
-  const fields = Array.from(modal.querySelectorAll(LICENSE_FORM_FIELD_SELECTOR));
-
-  return fields
-    .map((field) => {
-      const label = field.querySelector("label");
-      const labelText = String(label?.textContent || "").toLowerCase();
-      const optionText = String(field.textContent || "").toLowerCase();
-
-      const input =
-        field.querySelector('input[type="radio"], input[type="checkbox"]') ||
-        field.querySelector("label");
-      if (!labelText && !optionText) return null;
-
-      const isPersonal = /\bpersonal\b/.test(labelText);
-      const isProfessional = /\bprofessional\b/.test(labelText);
-      if (!isPersonal && !isProfessional) return null;
-
-      const tier = isProfessional
-        ? "professional"
-        : "personal";
-
-      return {
-        tier,
-        isFree: isPriceFree(optionText),
-        input,
-      };
-    })
-    .filter(Boolean);
-}
-
 function getPreferredLicenseInput(modal) {
-  const options = getLicenseOptionsFromModal(modal);
-  if (!options.length) return null;
+  const fields = modal.querySelectorAll(LICENSE_FORM_FIELD_SELECTOR);
+  let hasProfessional = false;
+  let hasPersonal = false;
+  let professionalInput = null;
+  let personalInput = null;
+  let professionalIsFree = false;
+  let personalIsFree = false;
 
-  const professional = options.find((option) => option.tier === "professional");
-  const personal = options.find((option) => option.tier === "personal");
+  for (const field of fields) {
+    const label = field.querySelector("label");
+    const labelText = String(label?.textContent || "").toLowerCase();
+    const optionText = String(field.textContent || "").toLowerCase();
+    if (!labelText && !optionText) continue;
 
-  if (professional?.isFree) return professional.input || null;
-  if (personal?.isFree) return personal.input || null;
+    const isPersonal = /\bpersonal\b/.test(labelText);
+    const isProfessional = /\bprofessional\b/.test(labelText);
+    if (!isPersonal && !isProfessional) continue;
+
+    const input =
+      field.querySelector('input[type="radio"], input[type="checkbox"]') ||
+      field.querySelector("label");
+    if (isProfessional && !hasProfessional) {
+      hasProfessional = true;
+      professionalInput = input;
+      professionalIsFree = isPriceFree(optionText);
+    } else if (isPersonal && !hasPersonal) {
+      hasPersonal = true;
+      personalInput = input;
+      personalIsFree = isPriceFree(optionText);
+    }
+
+    if (hasProfessional && hasPersonal) break;
+  }
+
+  if (hasProfessional && professionalIsFree) return professionalInput || null;
+  if (hasPersonal && personalIsFree) return personalInput || null;
 
   return null;
 }
 
 function getLicenseModalAddButton(modal) {
   const actionButtons = modal.querySelectorAll(LICENSE_MODAL_ADD_BUTTON_SELECTOR);
-  return Array.from(actionButtons).find(
-    (button) =>
+
+  for (const button of actionButtons) {
+    if (
       String(button.textContent || "").trim().toLowerCase().includes("add") ||
-      String(button.getAttribute("aria-label") || "").toLowerCase().includes("add"),
-  );
+      String(button.getAttribute("aria-label") || "").toLowerCase().includes("add")
+    ) {
+      return button;
+    }
+  }
+
+  return null;
 }
 
 function closeLicenseModal(modal) {
@@ -481,32 +754,62 @@ async function handleLicenseSelectionForLastClick() {
   return { status: "added", hadModal: true, modal };
 }
 
-function isAddLibraryCandidate(element, options = {}) {
-  if (!element) return false;
-  if (element.closest(`.${IGNORE_SELLER_BUTTON_CLASS}`)) return false;
-  if (element.getAttribute("aria-disabled") === "true") return false;
-  if (element.disabled) return false;
-
-  const requireStrictText = options.requireStrictText ?? true;
-
-  if (element.offsetParent === null) {
-    const bounds = element.getBoundingClientRect();
-    if (!bounds.width && !bounds.height) return false;
+function hasSkipLibraryButtonText(text) {
+  for (const pattern of SKIP_LIBRARY_BUTTON_PATTERNS) {
+    if (pattern.test(text)) return true;
   }
 
-  const text = String(
+  return false;
+}
+
+function hasAddLibraryActionText(text) {
+  for (const pattern of ADD_LIBRARY_TEXT_PATTERNS) {
+    if (pattern.test(text)) return true;
+  }
+
+  return false;
+}
+
+function getAddLibraryCandidateText(element) {
+  return String(
     `${element.textContent || ""} ${element.getAttribute("aria-label") || ""} ${
       element.title || ""
     }`,
   )
     .toLowerCase()
     .trim();
-  if (!text) return false;
+}
+
+function isAddLibraryCandidate(element, options = {}) {
+  if (!element) return false;
+  if (element.closest(IGNORE_SELLER_BUTTON_SELECTOR)) return false;
+  if (element.getAttribute("aria-disabled") === "true") return false;
+  if (element.disabled) return false;
+
+  const requireStrictText = options.requireStrictText ?? true;
+  const skipVisibilityCheck = options.skipVisibilityCheck === true;
+
+  if (!skipVisibilityCheck && element.offsetParent === null) {
+    const bounds = element.getBoundingClientRect();
+    if (!bounds.width && !bounds.height) return false;
+  }
+
   const href = String(element.getAttribute("href") || "").toLowerCase();
-  if (element.tagName === "A" && href && (href.includes("/products/") || href.includes("/listings/") || href.includes("/sellers/"))) {
+  if (
+    element.tagName === "A" &&
+    href &&
+    (
+      href.includes("/products/") ||
+      href.includes("/listings/") ||
+      href.includes("/sellers/")
+    )
+  ) {
     return false;
   }
-  if (SKIP_LIBRARY_BUTTON_PATTERNS.some((pattern) => pattern.test(text))) {
+
+  const text = options.text ?? getAddLibraryCandidateText(element);
+  if (!text) return false;
+  if (hasSkipLibraryButtonText(text)) {
     return false;
   }
 
@@ -516,7 +819,7 @@ function isAddLibraryCandidate(element, options = {}) {
     return true;
   }
 
-  return ADD_LIBRARY_TEXT_PATTERNS.some((pattern) => pattern.test(text));
+  return hasAddLibraryActionText(text);
 }
 
 function getAddLibraryButton(card) {
@@ -528,7 +831,7 @@ function getAddLibraryButton(card) {
   return null;
 }
 
-function getRectDistance(rectA, rectB) {
+function getRectDistanceSquared(rectA, rectB) {
   const deltaX = Math.max(
     rectA.left - rectB.right,
     rectB.left - rectA.right,
@@ -539,11 +842,7 @@ function getRectDistance(rectA, rectB) {
     rectB.top - rectA.bottom,
     0,
   );
-  return Math.hypot(deltaX, deltaY);
-}
-
-function sortByProximity(cardRect, candidateRects) {
-  return candidateRects.sort((left, right) => left.distance - right.distance);
+  return deltaX * deltaX + deltaY * deltaY;
 }
 
 function findNearbyAddLibraryButton(card) {
@@ -555,40 +854,44 @@ function findNearbyAddLibraryButton(card) {
     cardRect.width,
     cardRect.height,
   );
+  const maxDistanceSquared = maxDistance * maxDistance;
 
-  const candidates = Array.from(
-    document.querySelectorAll(ADD_LIBRARY_ACTION_SELECTOR),
-  )
-    .map((candidate) => ({ candidate, text: `${candidate.textContent || ""} ${candidate.getAttribute("aria-label") || ""} ${candidate.title || ""}`.toLowerCase() }))
-    .map(({ candidate, text }) => ({
-      candidate,
-      text,
-      rect: candidate.getBoundingClientRect(),
-      distance: getRectDistance(cardRect, candidate.getBoundingClientRect()),
-    }))
-    .filter(({ candidate, text, rect }) => {
-      if (!isAddLibraryCandidate(candidate, { requireStrictText: false })) return false;
-      if (!rect || (!rect.width && !rect.height)) return false;
+  let closestCandidate = null;
+  let closestDistanceSquared = Infinity;
+  const candidates = document.querySelectorAll(ADD_LIBRARY_ACTION_SELECTOR);
 
-      const distance = getRectDistance(cardRect, rect);
-      if (distance > maxDistance) return false;
+  for (const candidate of candidates) {
+    let rect = null;
+    if (candidate.offsetParent === null) {
+      rect = candidate.getBoundingClientRect();
+      if (!rect || (!rect.width && !rect.height)) continue;
+    }
 
-      if (SKIP_LIBRARY_BUTTON_PATTERNS.some((pattern) => pattern.test(text))) {
-        return false;
-      }
+    if (!isAddLibraryCandidate(candidate, {
+      requireStrictText: false,
+      skipVisibilityCheck: true,
+    })) {
+      continue;
+    }
 
-      return true;
-    })
-    .map((entry) => ({
-      ...entry,
-      distance: getRectDistance(cardRect, entry.rect),
-    }));
+    if (!rect) {
+      rect = candidate.getBoundingClientRect();
+      if (!rect || (!rect.width && !rect.height)) continue;
+    }
 
-  if (!candidates.length) return null;
+    const distanceSquared = getRectDistanceSquared(cardRect, rect);
+    if (
+      distanceSquared > maxDistanceSquared ||
+      distanceSquared >= closestDistanceSquared
+    ) {
+      continue;
+    }
 
-  sortByProximity(cardRect, candidates);
+    closestCandidate = candidate;
+    closestDistanceSquared = distanceSquared;
+  }
 
-  return candidates[0]?.candidate || null;
+  return closestCandidate;
 }
 
 async function findAddButtonForCard(card) {
@@ -604,9 +907,7 @@ async function findAddButtonForCard(card) {
 }
 
 async function addVisibleFreeItemsToLibrary() {
-  const listingNodes = document.querySelectorAll(
-    `${THUMBNAIL_SELECTOR}, ${PRODUCT_LINK_SELECTOR}, ${LISTING_LINK_SELECTOR}`,
-  );
+  const listingNodes = getListingScanNodes();
   const processedCards = new Set();
   const actions = [];
   let noActionButton = 0;
@@ -644,7 +945,7 @@ async function addVisibleFreeItemsToLibrary() {
       .toLowerCase()
       .trim();
     if (
-      SKIP_LIBRARY_BUTTON_PATTERNS.some((pattern) => pattern.test(label)) ||
+      hasSkipLibraryButtonText(label) ||
       /in\s+library/.test(label)
     ) {
       alreadyInLibrary += 1;
@@ -694,7 +995,7 @@ function parseCountToken(value) {
       ? 1000
       : 1000000
     : 1;
-  const parsed = Number.parseFloat(normalized.replace(/[kKmM]/gi, ""));
+  const parsed = Number.parseFloat(normalized);
   const total = parsed * multiplier;
   return Number.isNaN(total) ? null : total;
 }
@@ -713,56 +1014,21 @@ function parseFabRatingCount(value) {
   };
 }
 
-function parseReviewCount(value) {
-  const fabRatingCount = parseFabRatingCount(value);
+function parseReviewCount(value, fabRatingCount = parseFabRatingCount(value)) {
   if (fabRatingCount) return fabRatingCount.reviewCount;
 
-  const ratingCountMatch = value.match(
-    /\b[0-5](?:\.\d+)?\s*\((\d{1,3}(?:[.,]\d{3})+|\d+(?:\.\d+)?\s*[kKmM]|\d+)\)/i,
-  );
-  const strictMatch = value.match(
-    /(\d{1,3}(?:[.,]\d{3})+|\d+)\s*reviews?/i,
-  );
+  for (const pattern of REVIEW_COUNT_PATTERNS) {
+    const match = value.match(pattern);
+    if (match) return parseCountToken(match[1]);
+  }
 
-  const compactMatch = value.match(
-    /(\d+(?:\.\d+)?\s*[kKmM])\s*reviews?/i,
-  );
-  const ratingsMatch = value.match(
-    /(\d{1,3}(?:[.,]\d{3})+|\d+)\s*ratings?/i,
-  );
-  const compactRatingsMatch = value.match(
-    /(\d+(?:\.\d+)?\s*[kKmM])\s*ratings?/i,
-  );
-
-  const parenthesizedMatch = value.match(/\((\d{1,3}(?:[.,]\d{3})+|\d+)\s*reviews?\)/i);
-  const fallbackMatch = value.match(
-    /review[s]?\s*[:\-]?\s*(\d{1,3}(?:[.,]\d{3})+|\d+)/i,
-  );
-
-  const activeMatch =
-    ratingCountMatch ||
-    strictMatch ||
-    compactMatch ||
-    ratingsMatch ||
-    compactRatingsMatch ||
-    parenthesizedMatch ||
-    fallbackMatch;
-  if (!activeMatch) return null;
-
-  return parseCountToken(activeMatch[1]);
+  return null;
 }
 
-function parseRating(value) {
-  const fabRatingCount = parseFabRatingCount(value);
+function parseRating(value, fabRatingCount = parseFabRatingCount(value)) {
   if (fabRatingCount) return fabRatingCount.rating;
 
-  const ratingPatterns = [
-    /(?:^|\s|[^\d])([0-5](?:\.\d+)?)\s*\/\s*5\b/i,
-    /([0-5](?:\.\d+)?)\s*(?:out of|of)\s*5\s*stars?/i,
-    /([0-5](?:\.\d+)?)\s*stars?/i,
-  ];
-
-  for (const pattern of ratingPatterns) {
+  for (const pattern of RATING_PATTERNS) {
     const match = value.match(pattern);
     if (!match) continue;
     const parsed = Number.parseFloat(match[1]);
@@ -772,117 +1038,217 @@ function parseRating(value) {
   return null;
 }
 
+function getCachedCardFromListingNode(listingNode) {
+  const cached = LISTING_NODE_CARD_CACHE.get(listingNode);
+  if (!cached?.isConnected) return null;
+  if (!cached.contains(listingNode)) return null;
+  return cached;
+}
+
+function cacheCardFromListingNode(listingNode, card) {
+  if (card) LISTING_NODE_CARD_CACHE.set(listingNode, card);
+  return card;
+}
+
+function isProductHref(href) {
+  return href.startsWith("/products/") ||
+    href.includes("://www.fab.com/products/") ||
+    href.includes("://fab.com/products/");
+}
+
+function isProductOrListingHref(href) {
+  return href.startsWith("/products/") ||
+    href.startsWith("/listings/") ||
+    href.includes("://www.fab.com/products/") ||
+    href.includes("://fab.com/products/") ||
+    href.includes("://www.fab.com/listings/") ||
+    href.includes("://fab.com/listings/");
+}
+
+function isProductOrListingLinkElement(node) {
+  return node?.localName === "a" &&
+    isProductOrListingHref(node.getAttribute("href") || "");
+}
+
+function getFirstProductOrListingHref(node) {
+  const links = node.getElementsByTagName?.("a");
+  if (!links) return "";
+
+  for (const link of links) {
+    const href = link.getAttribute("href") || "";
+    if (isProductOrListingHref(href)) return href;
+  }
+
+  return "";
+}
+
+function getProductOrListingLinks(root = document) {
+  const links = root.getElementsByTagName?.("a");
+  const listingLinks = [];
+  if (!links) return listingLinks;
+
+  for (const link of links) {
+    if (isProductOrListingHref(link.getAttribute("href") || "")) {
+      listingLinks.push(link);
+    }
+  }
+
+  return listingLinks;
+}
+
+function getListingDescendantNodes(root, limit = Number.POSITIVE_INFINITY) {
+  const listingNodes = [];
+  const thumbnails = root.getElementsByClassName?.(THUMBNAIL_CLASS);
+  if (thumbnails) {
+    for (const thumbnail of thumbnails) {
+      listingNodes.push(thumbnail);
+      if (listingNodes.length >= limit) return listingNodes;
+    }
+  }
+
+  const links = root.getElementsByTagName?.("a");
+  if (links) {
+    for (const link of links) {
+      if (isProductOrListingHref(link.getAttribute("href") || "")) {
+        listingNodes.push(link);
+        if (listingNodes.length >= limit) return listingNodes;
+      }
+    }
+  }
+
+  return listingNodes;
+}
+
+function addListingDescendantCards(root, changedCards) {
+  let foundListingNode = false;
+  const thumbnails = root.getElementsByClassName?.(THUMBNAIL_CLASS);
+  if (thumbnails) {
+    for (const thumbnail of thumbnails) {
+      foundListingNode = true;
+      const card = getCardFromListingNode(thumbnail);
+      if (card) changedCards.add(card);
+    }
+  }
+
+  const links = root.getElementsByTagName?.("a");
+  if (links) {
+    for (const link of links) {
+      if (!isProductOrListingHref(link.getAttribute("href") || "")) continue;
+
+      foundListingNode = true;
+      const card = getCardFromListingNode(link);
+      if (card) changedCards.add(card);
+    }
+  }
+
+  return foundListingNode;
+}
+
+function isCardContainerElement(node) {
+  const tagName = node?.localName;
+  return tagName === "article" ||
+    tagName === "section" ||
+    tagName === "li" ||
+    tagName === "div";
+}
+
+function isListingNodeElement(node) {
+  return node?.classList?.contains(THUMBNAIL_CLASS) ||
+    isProductOrListingLinkElement(node);
+}
+
+function countProductLinks(node) {
+  let count = 0;
+  const links = node.getElementsByTagName?.("a");
+  if (!links) return 0;
+
+  for (const link of links) {
+    if (!isProductHref(link.getAttribute("href") || "")) continue;
+    count += 1;
+    if (count > 1) return count;
+  }
+
+  return count;
+}
+
 function getCardFromListingNode(listingNode) {
   if (!listingNode) return null;
 
-  if (listingNode.classList?.contains("fabkit-Thumbnail-root")) {
+  const cachedCard = getCachedCardFromListingNode(listingNode);
+  if (cachedCard) return cachedCard;
+
+  if (listingNode.classList?.contains(THUMBNAIL_CLASS)) {
     let node = listingNode.parentElement;
 
     while (node && node !== document.body) {
       const thumbnailCount =
-        node.querySelectorAll?.(THUMBNAIL_SELECTOR).length || 0;
+        node.getElementsByClassName?.(THUMBNAIL_CLASS).length || 0;
       if (thumbnailCount === 1 && parseFabRatingCount(node.textContent || "")) {
-        return node;
+        return cacheCardFromListingNode(listingNode, node);
       }
       node = node.parentElement;
     }
-    return listingNode.parentElement;
+    return cacheCardFromListingNode(listingNode, listingNode.parentElement);
   }
 
   let node = listingNode;
   let attempts = 0;
 
   while (node && node !== document.body && attempts < 16) {
-    const siblingLinks = node.querySelectorAll?.(PRODUCT_LINK_SELECTOR)
-      .length || 0;
-    const childThumbnails =
-      node.querySelectorAll?.(THUMBNAIL_SELECTOR).length || 0;
-    const hasText = (node.textContent || "").trim().length > 0;
-    const isCardContainer = node.matches?.("article, section, li, div");
+    if (isProductOrListingLinkElement(node)) {
+      return cacheCardFromListingNode(listingNode, node.parentElement || node);
+    }
 
-    if (
-      hasText &&
-      ((childThumbnails === 1 && parseFabRatingCount(node.textContent || "")) ||
-        (siblingLinks === 1 && isCardContainer) ||
-        node.matches?.(PRODUCT_LINK_SELECTOR))
-    ) {
-      if (node.matches?.(PRODUCT_LINK_SELECTOR)) return node.parentElement || node;
-      return node;
+    const nodeText = node.textContent || "";
+    const hasText = nodeText.trim().length > 0;
+    if (!hasText) {
+      node = node.parentElement;
+      attempts += 1;
+      continue;
+    }
+
+    const childThumbnails =
+      node.getElementsByClassName?.(THUMBNAIL_CLASS).length || 0;
+    if (childThumbnails === 1 && parseFabRatingCount(nodeText)) {
+      return cacheCardFromListingNode(listingNode, node);
+    }
+
+    const isCardContainer = isCardContainerElement(node);
+    if (isCardContainer && countProductLinks(node) === 1) {
+      return cacheCardFromListingNode(listingNode, node);
     }
 
     node = node.parentElement;
     attempts += 1;
   }
 
-  return listingNode.parentElement;
+  return cacheCardFromListingNode(listingNode, listingNode.parentElement);
 }
 
-function getCardMetricsSignature(card) {
-  const productLink = card.querySelector(PRODUCT_OR_LISTING_LINK_SELECTOR);
-  const rawText = card.textContent || "";
-  const href = productLink?.getAttribute
-    ? productLink.getAttribute("href") || ""
-    : "";
+function getCardMetricsSignature(card, knownHref = null) {
+  const contentVersion = getCardContentVersion(card);
+  const href = knownHref === null
+    ? getFirstProductOrListingHref(card)
+    : knownHref;
 
-  return {
-    productLink,
-    rawText,
-    signature: `${rawText}\u001f${href}`,
-  };
+  return `${contentVersion}\u001f${href}`;
 }
 
-function getCardMetrics(card) {
-  const { productLink, rawText, signature } = getCardMetricsSignature(card);
+function getCardMetrics(card, knownHref = null) {
+  const signature = getCardMetricsSignature(card, knownHref);
   const cached = CARD_METRICS_CACHE.get(card);
   if (cached?.signature === signature) return cached.metrics;
 
+  const rawText = card.textContent || "";
   const cardText = getCardText(card, rawText);
+  const fabRatingCount = parseFabRatingCount(cardText);
 
-  const getPathFromHref = (href) => {
-    if (!href) return "";
-    try {
-      return new URL(href, window.location.origin).pathname.toLowerCase();
-    } catch (err) {
-      return "";
-    }
-  };
-
-  const productPath = productLink?.getAttribute
-    ? getPathFromHref(productLink.getAttribute("href"))
-    : "";
-  const pluginMetaText = (() => {
-    const metaElements = card.querySelectorAll(
-      "[aria-label], [title], [data-type], [data-category], [data-kind], [data-item-type], [data-tags]",
-    );
-    const metaParts = [];
-    metaElements.forEach((element) => {
-      [
-        "aria-label",
-        "title",
-        "data-type",
-        "data-category",
-        "data-kind",
-        "data-item-type",
-        "data-tags",
-      ].forEach((attribute) => {
-        const attr = element.getAttribute(attribute);
-        if (attr) metaParts.push(String(attr).toLowerCase());
-      });
-
-      if (element.textContent?.trim()) {
-        metaParts.push(element.textContent.trim().toLowerCase());
-      }
-    });
-
-    return metaParts.join(" ");
-  })();
+  const sellerInfo = getCardSellerInfo(card);
 
   const metrics = {
-    sellerName: getSellerName(card),
-    reviewCount: parseReviewCount(cardText),
-    rating: parseRating(cardText),
-    productPath,
-    pluginMetaText,
+    ...sellerInfo,
+    reviewCount: parseReviewCount(cardText, fabRatingCount),
+    rating: parseRating(cardText, fabRatingCount),
     searchText: cardText,
   };
   CARD_METRICS_CACHE.set(card, { signature, metrics });
@@ -938,13 +1304,49 @@ function isMinimumReviewsFilterTriggered(metrics) {
 
 function hasHiddenKeywordMatch(metrics) {
   if (!config.hiddenKeywords.length) return false;
-  return config.hiddenKeywords.some((keyword) =>
-    metrics.searchText.includes(keyword),
-  );
+
+  for (const keyword of config.hiddenKeywords) {
+    if (metrics.searchText.includes(keyword)) return true;
+  }
+
+  return false;
 }
 
 function setTextContent(element, value) {
   if (element && element.textContent !== value) element.textContent = value;
+}
+
+function getFirstElementByClass(root, className) {
+  return root.getElementsByClassName?.(className)?.[0] || null;
+}
+
+function closestElementByClass(element, className) {
+  let current = element;
+  while (current) {
+    if (current.classList?.contains(className)) return current;
+    current = current.parentElement;
+  }
+
+  return null;
+}
+
+function closestBetterFabManagedElement(element) {
+  let current = element;
+  while (current) {
+    const classList = current.classList;
+    if (
+      classList?.contains(IGNORE_SELLER_BUTTON_CLASS) ||
+      classList?.contains(SELLER_PAGE_BUTTON_CLASS) ||
+      classList?.contains(SELLER_PROFILE_CLASS) ||
+      classList?.contains(SELLER_ROW_CLASS)
+    ) {
+      return current;
+    }
+
+    current = current.parentElement;
+  }
+
+  return null;
 }
 
 async function addSellerToIgnoreList(sellerName) {
@@ -952,18 +1354,18 @@ async function addSellerToIgnoreList(sellerName) {
   if (!normalizedSeller) return;
 
   const currentData = await chrome.storage.local.get("hiddenSellers");
-  const nextHiddenSellers = sanitizeList([
+  const nextHiddenSellers = setHiddenSellers([
     ...(currentData.hiddenSellers || []),
     normalizedSeller,
   ]);
 
-  config.hiddenSellers = nextHiddenSellers;
+  markFilterSettingsChanged();
   await chrome.storage.local.set({ hiddenSellers: nextHiddenSellers });
-  void processItems();
+  processItems();
 }
 
 function updateSellerPageIgnoreButton(button, sellerName) {
-  const isIgnored = config.hiddenSellers.includes(sellerName);
+  const isIgnored = hiddenSellerSet.has(sellerName);
   const label = isIgnored
     ? "Seller removed from listings"
     : "Remove seller from listings";
@@ -978,40 +1380,41 @@ function formatCount(value) {
 
 function getSellerRatingSummary(entries) {
   const totalPackages = entries.length;
-  const ratedEntries = entries.filter((entry) => entry.metrics.rating !== null);
-  const reviewedEntries = ratedEntries.filter(
-    (entry) => entry.metrics.reviewCount !== null && entry.metrics.reviewCount > 0,
-  );
-  const totalReviews = reviewedEntries.reduce(
-    (sum, entry) => sum + entry.metrics.reviewCount,
-    0,
-  );
+  let ratedPackages = 0;
+  let reviewedPackages = 0;
+  let totalReviews = 0;
+  let weightedTotal = 0;
+  let ratingTotal = 0;
+
+  for (const entry of entries) {
+    const { rating, reviewCount } = entry.metrics;
+    if (rating === null) continue;
+
+    ratedPackages += 1;
+    ratingTotal += rating;
+
+    if (reviewCount === null || reviewCount <= 0) continue;
+
+    reviewedPackages += 1;
+    totalReviews += reviewCount;
+    weightedTotal += rating * reviewCount;
+  }
 
   if (totalReviews > 0) {
-    const weightedTotal = reviewedEntries.reduce(
-      (sum, entry) => sum + entry.metrics.rating * entry.metrics.reviewCount,
-      0,
-    );
-
     return {
       average: weightedTotal / totalReviews,
       totalPackages,
       totalReviews,
-      ratedPackages: reviewedEntries.length,
+      ratedPackages: reviewedPackages,
     };
   }
 
-  if (ratedEntries.length) {
-    const ratingTotal = ratedEntries.reduce(
-      (sum, entry) => sum + entry.metrics.rating,
-      0,
-    );
-
+  if (ratedPackages > 0) {
     return {
-      average: ratingTotal / ratedEntries.length,
+      average: ratingTotal / ratedPackages,
       totalPackages,
       totalReviews: 0,
-      ratedPackages: ratedEntries.length,
+      ratedPackages,
     };
   }
 
@@ -1071,24 +1474,41 @@ function createSellerProfile() {
   return profile;
 }
 
-function ensureSellerProfile(isSellerPage, entries) {
-  const existingProfile = document.querySelector(`.${SELLER_PROFILE_CLASS}`);
+function getSellerProfileElement(allowQuery = true) {
+  if (sellerProfileElement?.isConnected) return sellerProfileElement;
+  sellerProfileElement = null;
+  if (!allowQuery) return null;
+
+  sellerProfileElement = document.querySelector(SELLER_PROFILE_SELECTOR);
+  return sellerProfileElement;
+}
+
+function removeSellerProfile(allowQuery = true) {
+  const existingProfile = getSellerProfileElement(allowQuery);
+  existingProfile?.remove();
+  if (existingProfile) sellerProfileElement = null;
+}
+
+function ensureSellerProfile(isSellerPage, entries, allowProfileQuery = true) {
+  const existingProfile = getSellerProfileElement(allowProfileQuery);
 
   if (!isSellerPage) {
-    existingProfile?.remove();
+    removeSellerProfile(allowProfileQuery);
     return;
   }
 
   const sellerName = getSellerNameFromPathname(window.location.pathname);
   if (!sellerName) {
-    existingProfile?.remove();
+    removeSellerProfile(allowProfileQuery);
     return;
   }
 
   const profile = existingProfile || createSellerProfile();
-  const button = profile.querySelector(`.${SELLER_PAGE_BUTTON_CLASS}`);
-  const averageElement = profile.querySelector(`.${SELLER_PROFILE_AVERAGE_CLASS}`);
-  const countElement = profile.querySelector(`.${SELLER_PROFILE_COUNT_CLASS}`);
+  if (!existingProfile) needsExtensionCleanup = true;
+  sellerProfileElement = profile;
+  const button = profile.querySelector(SELLER_PAGE_BUTTON_SELECTOR);
+  const averageElement = profile.querySelector(SELLER_PROFILE_AVERAGE_SELECTOR);
+  const countElement = profile.querySelector(SELLER_PROFILE_COUNT_SELECTOR);
   const ratingSummary = getSellerRatingSummary(entries);
 
   button.dataset.seller = sellerName;
@@ -1127,10 +1547,12 @@ function ensureSellerProfile(isSellerPage, entries) {
 }
 
 function removeIgnoreSellerButton(card) {
-  card.classList.remove(IGNORE_SELLER_CARD_CLASS);
-  card.querySelector(`.${IGNORE_SELLER_BUTTON_CLASS}`)?.remove();
+  if (!card.classList.contains(IGNORE_SELLER_CARD_CLASS)) return;
 
-  const sellerRow = card.querySelector(`.${SELLER_ROW_CLASS}`);
+  card.classList.remove(IGNORE_SELLER_CARD_CLASS);
+  getFirstElementByClass(card, IGNORE_SELLER_BUTTON_CLASS)?.remove();
+
+  const sellerRow = getFirstElementByClass(card, SELLER_ROW_CLASS);
   if (!sellerRow || sellerRow.tagName !== "SPAN" || !sellerRow.parentElement)
     return;
 
@@ -1141,10 +1563,12 @@ function removeIgnoreSellerButton(card) {
   sellerRow.remove();
 }
 
-function ensureIgnoreSellerButton(card, sellerName) {
+function ensureIgnoreSellerButton(card, sellerName, sellerLink = getSellerLink(card)) {
   const normalizedSeller = String(sellerName || "").trim().toLowerCase();
-  const sellerLink = getSellerLink(card);
-  const existingButton = card.querySelector(`.${IGNORE_SELLER_BUTTON_CLASS}`);
+  const existingButton = getFirstElementByClass(
+    card,
+    IGNORE_SELLER_BUTTON_CLASS,
+  );
 
   if (!normalizedSeller || !sellerLink) {
     existingButton?.remove();
@@ -1154,7 +1578,7 @@ function ensureIgnoreSellerButton(card, sellerName) {
     return;
   }
 
-  const currentSellerRow = sellerLink.closest(`.${SELLER_ROW_CLASS}`);
+  const currentSellerRow = closestElementByClass(sellerLink, SELLER_ROW_CLASS);
   if (
     existingButton?.dataset.seller === normalizedSeller &&
     existingButton.nextElementSibling === sellerLink &&
@@ -1163,6 +1587,8 @@ function ensureIgnoreSellerButton(card, sellerName) {
   ) {
     return;
   }
+
+  needsExtensionCleanup = true;
 
   if (!card.classList.contains(IGNORE_SELLER_CARD_CLASS)) {
     card.classList.add(IGNORE_SELLER_CARD_CLASS);
@@ -1205,11 +1631,21 @@ function ensureIgnoreSellerButton(card, sellerName) {
   button.setAttribute("aria-label", `Hide seller: ${normalizedSeller}`);
 }
 
-function isConfiguredQueryMatchActive() {
-  const exactModeMatch = normalizeSortText(config.starSortModeMatch || "");
-  if (!exactModeMatch.includes("=")) return null;
+function isConfiguredQueryMatchActive(
+  exactModeMatch = normalizeSortText(config.starSortModeMatch || ""),
+) {
+  const search = window.location.search;
+  const signature = `${search}|${exactModeMatch}`;
+  if (configuredQueryMatchCache.signature === signature) {
+    return configuredQueryMatchCache.value;
+  }
 
-  const currentParams = new URLSearchParams(window.location.search);
+  if (!exactModeMatch.includes("=")) {
+    configuredQueryMatchCache = { signature, value: null };
+    return null;
+  }
+
+  const currentParams = new URLSearchParams(search);
   try {
     const configuredParams = new URLSearchParams(exactModeMatch);
     for (const [key, value] of configuredParams.entries()) {
@@ -1218,86 +1654,58 @@ function isConfiguredQueryMatchActive() {
         currentValue === null ||
         normalizeSortText(currentValue) !== normalizeSortText(value)
       ) {
+        configuredQueryMatchCache = { signature, value: false };
         return false;
       }
     }
+    configuredQueryMatchCache = { signature, value: true };
     return true;
   } catch (err) {
+    configuredQueryMatchCache = { signature, value: false };
     return false;
   }
 }
 
 function isKnownStarSortQueryMode() {
-  const queryParams = new URLSearchParams(window.location.search);
+  const search = window.location.search;
+  if (knownStarSortQueryModeCache.search === search) {
+    return knownStarSortQueryModeCache.value;
+  }
+
+  const queryParams = new URLSearchParams(search);
 
   for (const [key, value] of queryParams.entries()) {
-    if (!STAR_SORT_QUERY_KEYS.includes(key.toLowerCase())) continue;
-    if (normalizeSortText(value).includes(STAR_SORT_QUERY_FRAGMENT)) return true;
+    if (!STAR_SORT_QUERY_KEY_SET.has(key.toLowerCase())) continue;
+    if (normalizeSortText(value).includes(STAR_SORT_QUERY_FRAGMENT)) {
+      knownStarSortQueryModeCache = { search, value: true };
+      return true;
+    }
   }
 
+  knownStarSortQueryModeCache = { search, value: false };
   return false;
-}
-
-function isExplicitStarModeAlias(explicitModeMatch) {
-  if (!explicitModeMatch) return false;
-
-  if (/\b(5|five)\s*[- ]*\s*stars?\b/i.test(explicitModeMatch))
-    return true;
-  if (explicitModeMatch.includes(STAR_SORT_QUERY_FRAGMENT)) return true;
-
-  if (
-    explicitModeMatch.includes("min_average_rating=5") &&
-    explicitModeMatch.includes("max_average_rating=5")
-  ) {
-    return true;
-  }
-
-  try {
-    const configuredParams = new URLSearchParams(explicitModeMatch);
-    const minRating = Number.parseFloat(
-      configuredParams.get("min_average_rating"),
-    );
-    const maxRating = Number.parseFloat(
-      configuredParams.get("max_average_rating"),
-    );
-    return Number.isFinite(minRating) && Number.isFinite(maxRating) &&
-      minRating >= 5 && maxRating >= 5;
-  } catch (err) {
-    return false;
-  }
 }
 
 function isStarSortActive() {
   const explicitMatchConfigured = normalizeSortText(config.starSortModeMatch || "");
-  if (isKnownStarSortQueryMode()) return true;
+  const isKnownQueryMode = isKnownStarSortQueryMode();
+  if (isKnownQueryMode) return true;
 
   if (explicitMatchConfigured && explicitMatchConfigured.includes("=")) {
-    if (isConfiguredQueryMatchActive() === true) return true;
-    if (
-      isExplicitStarModeAlias(explicitMatchConfigured) &&
-      isKnownStarSortQueryMode()
-    ) {
-      return true;
-    }
-    return false;
+    return isConfiguredQueryMatchActive(explicitMatchConfigured) === true;
   }
 
   if (config.starSortModeSelector) {
     const configuredSortMode = getConfiguredSortMode();
-    if (!configuredSortMode) return isKnownStarSortQueryMode();
+    if (!configuredSortMode) return false;
     if (!explicitMatchConfigured) {
-      return STAR_SORT_INDICATOR.test(configuredSortMode) ||
-        isKnownStarSortQueryMode();
+      return STAR_SORT_INDICATOR.test(configuredSortMode);
     }
 
-    return configuredSortMode.includes(explicitMatchConfigured) ||
-      (
-        isExplicitStarModeAlias(explicitMatchConfigured) &&
-        isKnownStarSortQueryMode()
-      );
+    return configuredSortMode.includes(explicitMatchConfigured);
   }
 
-  return isKnownStarSortQueryMode();
+  return false;
 }
 
 function compareCardMetrics(a, b) {
@@ -1319,50 +1727,74 @@ function compareCardMetrics(a, b) {
 function applyStarReviewSort(entries) {
   const entriesByParent = new Map();
 
-  entries.forEach((entry) => {
+  for (const entry of entries) {
     const parent = entry.card.parentElement;
-    if (!parent) return;
+    if (!parent) continue;
     if (!entriesByParent.has(parent)) entriesByParent.set(parent, []);
     entriesByParent.get(parent).push(entry);
-  });
+  }
 
-  entriesByParent.forEach((children) => {
-    const sorted = [...children].sort(compareCardMetrics);
-    if (sorted.length < 2) return;
+  for (const [parent, children] of entriesByParent) {
+    if (children.length < 2) continue;
 
-    let changed = false;
-    for (let i = 0; i < sorted.length; i += 1) {
-      if (children[i]?.card !== sorted[i]?.card) {
-        changed = true;
+    let isAlreadySorted = true;
+    for (let i = 1; i < children.length; i += 1) {
+      if (compareCardMetrics(children[i - 1], children[i]) > 0) {
+        isAlreadySorted = false;
         break;
       }
     }
+    if (isAlreadySorted) continue;
 
-    if (!changed) return;
+    const sorted = [...children].sort(compareCardMetrics);
 
-    sorted.forEach((entry) => {
-      const parent = entry.card.parentElement;
-      if (parent) parent.appendChild(entry.card);
-    });
-  });
+    for (const entry of sorted) {
+      parent.appendChild(entry.card);
+    }
+  }
 }
 
 function disableExtensionManipulations(listingNodes) {
-  listingNodes.forEach((item) => {
+  const processedCards = new Set();
+
+  for (const item of listingNodes) {
     const card = getCardFromListingNode(item);
-    if (!card) return;
+    if (!card) continue;
+    if (processedCards.has(card)) continue;
+    processedCards.add(card);
+
     setCardHiddenState(card, false);
     removeIgnoreSellerButton(card);
-  });
+  }
 
-  const existingProfile = document.querySelector(`.${SELLER_PROFILE_CLASS}`);
-  existingProfile?.remove();
+  removeSellerProfile();
+  needsExtensionCleanup = false;
+}
+
+function getListingScanNodes() {
+  const listingLinks = getProductOrListingLinks();
+  if (listingLinks.length > 0) return listingLinks;
+  return document.getElementsByClassName(THUMBNAIL_CLASS);
+}
+
+function cleanupExtensionManipulations(listingSetSignature = null) {
+  if (!needsExtensionCleanup) {
+    if (listingSetSignature) markListingSetProcessed(listingSetSignature);
+    return;
+  }
+
+  const listingNodes = getListingScanNodes();
+  const currentListingSetSignature =
+    listingSetSignature || getListingSetSignatureFromNodes(listingNodes);
+  disableExtensionManipulations(listingNodes);
+  markListingSetProcessed(currentListingSetSignature);
 }
 
 function setCardHiddenState(card, shouldHide) {
   if (shouldHide) {
     if (!card.classList.contains("fab-hidden-item")) {
       card.classList.add("fab-hidden-item");
+      needsExtensionCleanup = true;
     }
     return;
   }
@@ -1372,18 +1804,45 @@ function setCardHiddenState(card, shouldHide) {
   }
 }
 
-function getListingSetSignature() {
-  const links = document.querySelectorAll(PRODUCT_OR_LISTING_LINK_SELECTOR);
-  const firstHref = links[0]?.getAttribute("href") || "";
-  const lastHref = links[links.length - 1]?.getAttribute("href") || "";
+function buildListingSetSignature(linkCount, firstHref, lastHref) {
+  return `${window.location.pathname}|${window.location.search}|${linkCount}|${firstHref}|${lastHref}`;
+}
 
-  return [
-    window.location.pathname,
-    window.location.search,
+function getListingSetSignature() {
+  const links = getProductOrListingLinks();
+
+  return buildListingSetSignature(
     links.length,
-    firstHref,
-    lastHref,
-  ].join("|");
+    links[0]?.getAttribute("href") || "",
+    links[links.length - 1]?.getAttribute("href") || "",
+  );
+}
+
+function getListingSetSignatureFromNodes(listingNodes) {
+  const firstNode = listingNodes[0];
+  if (isProductOrListingLinkElement(firstNode)) {
+    const lastNode = listingNodes[listingNodes.length - 1];
+    return buildListingSetSignature(
+      listingNodes.length,
+      firstNode.getAttribute("href") || "",
+      lastNode?.getAttribute("href") || "",
+    );
+  }
+
+  let linkCount = 0;
+  let firstHref = "";
+  let lastHref = "";
+
+  for (const node of listingNodes) {
+    if (!isProductOrListingLinkElement(node)) continue;
+
+    const href = node.getAttribute("href") || "";
+    if (linkCount === 0) firstHref = href;
+    lastHref = href;
+    linkCount += 1;
+  }
+
+  return buildListingSetSignature(linkCount, firstHref, lastHref);
 }
 
 function markListingSetProcessed(signature) {
@@ -1391,113 +1850,334 @@ function markListingSetProcessed(signature) {
   lastProcessItemsCompletedAt = Date.now();
 }
 
-async function processItems() {
-  const pathname = window.location.pathname;
+function getCardProcessingState(
+  pathname = window.location.pathname,
+) {
   const isHomePage = pathname === "/";
   const isLimitedTimeFreePage = pathname.startsWith("/limited-time-free");
   const isLibraryPage = pathname.startsWith("/library");
   const isSellerPage = pathname.startsWith("/sellers/");
-
   const shouldBypassFilters = isHomePage || isLimitedTimeFreePage;
-  const listingSetSignature = getListingSetSignature();
-  const listingNodes = document.querySelectorAll(
-    `${THUMBNAIL_SELECTOR}, ${PRODUCT_LINK_SELECTOR}`,
-  );
-  const entries = [];
-  const processedCards = new Set();
-  const shouldRunPresetFilters = !shouldBypassFilters && hasAnyActivePreset();
+  const shouldApplyStarSort =
+    config.sortStarsByReviewCount && isStarSortActive();
+  const hasActivePresets = hasAnyActivePreset();
+  let hasWork = false;
+
+  if (isSellerPage || config.showHideSellerButtons || shouldApplyStarSort) {
+    hasWork = true;
+  } else if (!shouldBypassFilters) {
+    const shouldRunSellerFilter =
+      !isLibraryPage || config.applySellerFilterInLibrary;
+    hasWork = config.filterActive ||
+      config.minimumReviewCount > 0 ||
+      hasActivePresets ||
+      (
+        shouldRunSellerFilter &&
+        (hiddenSellerSet.size > 0 || config.hiddenKeywords.length > 0)
+      );
+  }
+
+  return {
+    pathname,
+    isHomePage,
+    isLimitedTimeFreePage,
+    isLibraryPage,
+    isSellerPage,
+    shouldBypassFilters,
+    hasWork,
+    shouldApplyStarSort,
+    hasActivePresets,
+  };
+}
+
+function hasPotentialStarSortWork() {
+  if (!config.sortStarsByReviewCount) return false;
+
+  if (config.starSortModeSelector) return true;
+
+  const signature = `${window.location.search}|${config.starSortModeMatch}`;
+  if (potentialStarSortWorkCache.signature === signature) {
+    return potentialStarSortWorkCache.value;
+  }
+
+  const explicitModeMatch = normalizeSortText(config.starSortModeMatch || "");
+  const isKnownQueryMode = isKnownStarSortQueryMode();
+  const value =
+    isKnownQueryMode ||
+    (
+      explicitModeMatch.includes("=") &&
+      isConfiguredQueryMatchActive(explicitModeMatch) === true
+    );
+
+  potentialStarSortWorkCache = { signature, value };
+  return value;
+}
+
+function hasPotentialCardProcessingWork(
+  pathname = window.location.pathname,
+  potentialStarSortWork = null,
+  isSellerPage = pathname.startsWith("/sellers/"),
+) {
+  const showHideSellerButtons = config.showHideSellerButtons;
+  const resolvedPotentialStarSortWork = potentialStarSortWork ??
+    (
+      isSellerPage || showHideSellerButtons
+        ? false
+        : hasPotentialStarSortWork()
+    );
+  const cached = potentialCardProcessingWorkCache;
+  if (
+    cached.pathname === pathname &&
+    cached.filterSettingsVersion === filterSettingsVersion &&
+    cached.potentialStarSortWork === resolvedPotentialStarSortWork &&
+    cached.isSellerPage === isSellerPage &&
+    cached.showHideSellerButtons === showHideSellerButtons
+  ) {
+    return cached.value;
+  }
+
+  let value = true;
+
+  if (!isSellerPage && !showHideSellerButtons && !resolvedPotentialStarSortWork) {
+    const shouldBypassFilters =
+      pathname === "/" || pathname.startsWith("/limited-time-free");
+
+    if (shouldBypassFilters) {
+      value = false;
+    } else if (
+      !config.filterActive &&
+      config.minimumReviewCount <= 0 &&
+      !hasAnyActivePreset()
+    ) {
+      const isLibraryPage = pathname.startsWith("/library");
+      const shouldRunSellerFilter =
+        !isLibraryPage || config.applySellerFilterInLibrary;
+      value = shouldRunSellerFilter &&
+        (hiddenSellerSet.size > 0 || config.hiddenKeywords.length > 0);
+    }
+  }
+
+  potentialCardProcessingWorkCache = {
+    pathname,
+    filterSettingsVersion,
+    potentialStarSortWork: resolvedPotentialStarSortWork,
+    isSellerPage,
+    showHideSellerButtons,
+    value,
+  };
+  return value;
+}
+
+function processItems(listingSetSignature = null, targetCards = null, processingState = null) {
+  const pathname = processingState?.pathname || window.location.pathname;
 
   if (!config.extensionActive) {
-    disableExtensionManipulations(listingNodes);
-    markListingSetProcessed(listingSetSignature);
+    cleanupExtensionManipulations(listingSetSignature);
     return;
   }
 
-  for (const [index, item] of listingNodes.entries()) {
-    if (!config.extensionActive) {
-      disableExtensionManipulations(listingNodes);
-      return;
+  const cardProcessingState = processingState || getCardProcessingState(pathname);
+  const isHomePage = cardProcessingState.isHomePage ?? pathname === "/";
+  const isLimitedTimeFreePage = cardProcessingState.isLimitedTimeFreePage ??
+    pathname.startsWith("/limited-time-free");
+  const isLibraryPage = cardProcessingState.isLibraryPage ??
+    pathname.startsWith("/library");
+  const isSellerPage = cardProcessingState.isSellerPage ??
+    pathname.startsWith("/sellers/");
+  const shouldBypassFilters = cardProcessingState.shouldBypassFilters ??
+    (isHomePage || isLimitedTimeFreePage);
+
+  if (!cardProcessingState.hasWork) {
+    cleanupExtensionManipulations(listingSetSignature);
+    return;
+  }
+
+  const shouldApplyStarSort = cardProcessingState.shouldApplyStarSort;
+  const needsFullCardSet = isSellerPage || shouldApplyStarSort;
+  const shouldProcessTargetCards =
+    targetCards?.size > 0 &&
+    !needsFullCardSet;
+  const listingNodes = shouldProcessTargetCards
+    ? null
+    : getListingScanNodes();
+  const currentListingSetSignature =
+    listingSetSignature ||
+    (shouldProcessTargetCards ? lastProcessedListingSignature : "") ||
+    getListingSetSignatureFromNodes(listingNodes || []);
+  const shouldCollectEntries = isSellerPage || shouldApplyStarSort;
+  const entries = shouldCollectEntries ? [] : null;
+  const shouldAllowProfileQuery = !shouldProcessTargetCards;
+  const processedCards = shouldProcessTargetCards ? null : new Set();
+  const shouldRunPresetFilters = !shouldBypassFilters &&
+    (cardProcessingState.hasActivePresets ?? hasAnyActivePreset());
+  const shouldRunSellerFilter = !shouldBypassFilters &&
+    !isSellerPage &&
+    (!isLibraryPage || config.applySellerFilterInLibrary);
+  const shouldRunSavedFilter = !shouldBypassFilters &&
+    config.filterActive &&
+    (!isSellerPage || config.applySavedFilterOnSellerPage);
+  const shouldEvaluateHideState = !shouldBypassFilters &&
+    (
+      shouldRunSavedFilter ||
+      (shouldRunSellerFilter &&
+        (hiddenSellerSet.size > 0 || config.hiddenKeywords.length > 0)) ||
+      config.minimumReviewCount > 0 ||
+      shouldRunPresetFilters
+    );
+  const needsFullCardMetrics = isSellerPage ||
+    shouldApplyStarSort ||
+    (shouldRunSellerFilter && config.hiddenKeywords.length > 0) ||
+    (!shouldBypassFilters &&
+      config.minimumReviewCount > 0) ||
+    shouldRunPresetFilters;
+  const needsCardMetrics = isSellerPage ||
+    shouldApplyStarSort ||
+    config.showHideSellerButtons ||
+    (shouldRunSellerFilter &&
+      (hiddenSellerSet.size > 0 || config.hiddenKeywords.length > 0)) ||
+    (!shouldBypassFilters &&
+      config.minimumReviewCount > 0) ||
+    shouldRunPresetFilters;
+  const filterContextSignature = `${pathname}|${
+    shouldBypassFilters ? "bypass" : "filter"
+  }|${isLibraryPage ? "library" : "not-library"}|${
+    isSellerPage ? "seller" : "not-seller"
+  }`;
+
+  const itemsToProcess = shouldProcessTargetCards ? targetCards : listingNodes;
+  const shouldUseItemHrefForMetrics =
+    !shouldProcessTargetCards &&
+    isProductOrListingLinkElement(listingNodes?.[0]);
+  let index = shouldCollectEntries ? 0 : null;
+
+  for (const item of itemsToProcess) {
+    const card = shouldProcessTargetCards
+      ? item
+      : getCardFromListingNode(item);
+    const entryIndex = shouldCollectEntries ? index : 0;
+    if (shouldCollectEntries) index += 1;
+
+    if (!card) continue;
+    if (shouldProcessTargetCards && !card.isConnected) continue;
+    if (processedCards) {
+      if (processedCards.has(card)) continue;
+      processedCards.add(card);
     }
 
-    const card = getCardFromListingNode(item);
-    if (!card) continue;
-    if (processedCards.has(card)) continue;
-    processedCards.add(card);
-
-    const metrics = getCardMetrics(card);
-    const entry = {
-      card,
-      metrics,
-      index,
-      shouldHide: false,
-    };
+    const knownItemHref = shouldUseItemHrefForMetrics
+      ? item.getAttribute("href") || ""
+      : null;
+    const cardDomState = shouldEvaluateHideState
+      ? getCardDomState(
+        card,
+        filterContextSignature,
+        needsFullCardMetrics,
+        shouldRunSavedFilter,
+        knownItemHref,
+      )
+      : null;
+    const cardDomSignature = cardDomState?.signature || "";
+    const cachedFilterResult = shouldEvaluateHideState
+      ? getCachedCardFilterResult(
+        card,
+        cardDomSignature,
+        needsFullCardMetrics,
+      )
+      : null;
+    const metrics = needsFullCardMetrics
+      ? cachedFilterResult?.metrics || getCardMetrics(
+        card,
+        knownItemHref,
+      )
+      : needsCardMetrics
+        ? cachedFilterResult?.metrics || getCardSellerInfo(card)
+      : null;
+    let shouldHide = false;
 
     if (config.showHideSellerButtons) {
-      ensureIgnoreSellerButton(card, metrics.sellerName);
+      ensureIgnoreSellerButton(card, metrics.sellerName, metrics.sellerLink);
     } else {
       removeIgnoreSellerButton(card);
     }
 
-    if (!shouldBypassFilters) {
-      let shouldRunSavedFilter = config.filterActive;
-      if (isSellerPage && !config.applySavedFilterOnSellerPage) {
-        shouldRunSavedFilter = false;
+    if (cachedFilterResult) {
+      shouldHide = cachedFilterResult.shouldHide;
+      if (shouldCollectEntries) {
+        entries.push({ card, metrics, index: entryIndex, shouldHide });
+      } else {
+        setCardHiddenState(card, shouldHide);
       }
+      continue;
+    }
 
+    if (shouldEvaluateHideState) {
       if (shouldRunSavedFilter) {
-        const isSaved = card.querySelector(
-          ".fabkit-Typography--intent-success .edsicon-check-circle-filled",
-        );
-        if (isSaved) entry.shouldHide = true;
+        if (cardDomState.isSaved) shouldHide = true;
       }
 
-      const shouldRunSellerFilter = !isSellerPage &&
-        (!isLibraryPage || config.applySellerFilterInLibrary);
-
-      if (!entry.shouldHide && shouldRunSellerFilter) {
-        if (config.hiddenSellers.includes(metrics.sellerName)) {
-          entry.shouldHide = true;
+      if (!shouldHide && shouldRunSellerFilter && metrics) {
+        if (hiddenSellerSet.has(metrics.sellerName)) {
+          shouldHide = true;
         } else if (hasHiddenKeywordMatch(metrics)) {
-          entry.shouldHide = true;
+          shouldHide = true;
         }
       }
 
-      if (!entry.shouldHide && isMinimumReviewsFilterTriggered(metrics)) {
-        entry.shouldHide = true;
+      if (!shouldHide && isMinimumReviewsFilterTriggered(metrics)) {
+        shouldHide = true;
       }
 
       if (
-        !entry.shouldHide &&
+        !shouldHide &&
         shouldRunPresetFilters &&
         isHiddenByFilterPresets(metrics)
       ) {
-        entry.shouldHide = true;
+        shouldHide = true;
       }
     }
 
-    entries.push(entry);
+    if (shouldEvaluateHideState) {
+      setCachedCardFilterResult(
+        card,
+      cardDomSignature,
+      metrics,
+      shouldHide,
+      needsFullCardMetrics,
+    );
+    }
+    if (shouldCollectEntries) {
+      entries.push({ card, metrics, index: entryIndex, shouldHide });
+    } else {
+      setCardHiddenState(card, shouldHide);
+    }
   }
 
   if (!config.extensionActive) {
     disableExtensionManipulations(listingNodes);
-    markListingSetProcessed(listingSetSignature);
+    markListingSetProcessed(currentListingSetSignature);
     return;
   }
 
-  entries.forEach((entry) => {
-    setCardHiddenState(entry.card, entry.shouldHide);
-  });
+  if (shouldCollectEntries) {
+    for (const entry of entries) {
+      setCardHiddenState(entry.card, entry.shouldHide);
+    }
+  }
 
-  ensureSellerProfile(isSellerPage, entries);
+  if (isSellerPage || sellerProfileElement?.isConnected) {
+    ensureSellerProfile(
+      isSellerPage,
+      entries || EMPTY_ENTRIES,
+      shouldAllowProfileQuery,
+    );
+  }
 
-  if (config.sortStarsByReviewCount && isStarSortActive()) {
+  if (shouldCollectEntries && shouldApplyStarSort) {
     applyStarReviewSort(entries);
   }
 
-  markListingSetProcessed(listingSetSignature);
+  markListingSetProcessed(currentListingSetSignature);
 }
-
-chrome.storage.local.remove("betterFabListingPluginCache").catch(() => {});
 
 chrome.storage.local
   .get([
@@ -1517,7 +2197,7 @@ chrome.storage.local
   .then((data) => {
     if (data.filterActive !== undefined) config.filterActive = data.filterActive;
     if (data.hiddenSellers !== undefined)
-      config.hiddenSellers = sanitizeList(data.hiddenSellers);
+      setHiddenSellers(data.hiddenSellers);
     if (data.applySellerFilterInLibrary !== undefined)
       config.applySellerFilterInLibrary = data.applySellerFilterInLibrary;
     if (data.applySavedFilterOnSellerPage !== undefined)
@@ -1540,46 +2220,124 @@ chrome.storage.local
       config.activeFilterPresets = sanitizePresetState(
         data.activeFilterPresets,
       );
+      refreshActiveFilterPresetCache();
     }
     if (data.extensionActive !== undefined) {
       config.extensionActive = data.extensionActive;
     }
-    void processItems();
+    markFilterSettingsChanged();
+    processItems();
   });
 
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.action === "update_filters") {
+    let shouldProcess = false;
+    let filterSettingsChanged = false;
+    const noteChange = (changed, affectsFilter = true) => {
+      if (!changed) return;
+      shouldProcess = true;
+      if (affectsFilter) filterSettingsChanged = true;
+    };
+
+    noteChange(config.filterActive !== request.filterActive);
     config.filterActive = request.filterActive;
-    config.hiddenSellers = sanitizeList(request.hiddenSellers);
+
+    const nextHiddenSellers = sanitizeList(request.hiddenSellers);
+    const hiddenSellersChanged = !areListsEqual(
+      config.hiddenSellers,
+      nextHiddenSellers,
+    );
+    noteChange(hiddenSellersChanged);
+    if (hiddenSellersChanged) setHiddenSellers(nextHiddenSellers);
+
+    noteChange(
+      config.applySellerFilterInLibrary !== request.applySellerFilterInLibrary,
+    );
     config.applySellerFilterInLibrary = request.applySellerFilterInLibrary;
-    config.applySavedFilterOnSellerPage = request.applySavedFilterOnSellerPage;
-    config.minimumReviewCount = Number.parseInt(request.minimumReviewCount, 10) || 0;
-    config.hiddenKeywords = sanitizeList(request.hiddenKeywords);
+
+    noteChange(
+      config.applySavedFilterOnSellerPage !==
+        request.applySavedFilterOnSellerPage,
+    );
+    config.applySavedFilterOnSellerPage =
+      request.applySavedFilterOnSellerPage;
+
+    const nextMinimumReviewCount =
+      Number.parseInt(request.minimumReviewCount, 10) || 0;
+    noteChange(config.minimumReviewCount !== nextMinimumReviewCount);
+    config.minimumReviewCount = nextMinimumReviewCount;
+
+    const nextHiddenKeywords = sanitizeList(request.hiddenKeywords);
+    noteChange(!areListsEqual(config.hiddenKeywords, nextHiddenKeywords));
+    config.hiddenKeywords = nextHiddenKeywords;
+
+    noteChange(
+      config.sortStarsByReviewCount !== request.sortStarsByReviewCount,
+      false,
+    );
     config.sortStarsByReviewCount = request.sortStarsByReviewCount;
-    config.showHideSellerButtons = request.showHideSellerButtons !== false;
-    config.activeFilterPresets = sanitizePresetState(request.activeFilterPresets);
-    config.starSortModeSelector =
+
+    const nextShowHideSellerButtons = request.showHideSellerButtons !== false;
+    noteChange(
+      config.showHideSellerButtons !== nextShowHideSellerButtons,
+      false,
+    );
+    config.showHideSellerButtons = nextShowHideSellerButtons;
+
+    const nextActiveFilterPresets = sanitizePresetState(
+      request.activeFilterPresets,
+    );
+    const activeFilterPresetsChanged = !arePresetStatesEqual(
+      config.activeFilterPresets,
+      nextActiveFilterPresets,
+    );
+    noteChange(activeFilterPresetsChanged);
+    if (activeFilterPresetsChanged) {
+      config.activeFilterPresets = nextActiveFilterPresets;
+      refreshActiveFilterPresetCache();
+    }
+
+    const nextStarSortModeSelector =
       typeof request.starSortModeSelector === "string"
         ? request.starSortModeSelector.trim()
         : "";
-    config.starSortModeMatch =
+    noteChange(config.starSortModeSelector !== nextStarSortModeSelector, false);
+    config.starSortModeSelector = nextStarSortModeSelector;
+
+    const nextStarSortModeMatch =
       typeof request.starSortModeMatch === "string"
         ? request.starSortModeMatch.trim().toLowerCase()
         : "";
+    noteChange(config.starSortModeMatch !== nextStarSortModeMatch, false);
+    config.starSortModeMatch = nextStarSortModeMatch;
+
     if (typeof request.extensionActive === "boolean") {
+      noteChange(config.extensionActive !== request.extensionActive, false);
       config.extensionActive = request.extensionActive;
     }
-    void processItems();
+
+    if (filterSettingsChanged) markFilterSettingsChanged();
+    if (shouldProcess) processItems();
   }
 
   if (request.action === "update_state") {
+    let filterStateChanged = false;
+    let shouldProcess = false;
     if (typeof request.state === "boolean") {
-      config.filterActive = request.state;
+      filterStateChanged = config.filterActive !== request.state;
+      if (filterStateChanged) {
+        config.filterActive = request.state;
+        shouldProcess = true;
+      }
     }
     if (typeof request.extensionActive === "boolean") {
-      config.extensionActive = request.extensionActive;
+      if (config.extensionActive !== request.extensionActive) {
+        config.extensionActive = request.extensionActive;
+        shouldProcess = true;
+      }
     }
-    void processItems();
+    if (filterStateChanged) markFilterSettingsChanged();
+    if (shouldProcess) processItems();
   }
 
   if (request.action === "add_free_library") {
@@ -1601,19 +2359,41 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== "local") return;
+  let shouldProcess = false;
+  let filterSettingsChanged = false;
   if (changes.hiddenSellers) {
-    config.hiddenSellers = sanitizeList(changes.hiddenSellers.newValue);
+    const nextHiddenSellers = sanitizeList(changes.hiddenSellers.newValue);
+    if (!areListsEqual(config.hiddenSellers, nextHiddenSellers)) {
+      setHiddenSellers(nextHiddenSellers);
+      filterSettingsChanged = true;
+      shouldProcess = true;
+    }
   }
   if (changes.hiddenKeywords) {
-    config.hiddenKeywords = sanitizeList(changes.hiddenKeywords.newValue);
+    const nextHiddenKeywords = sanitizeList(changes.hiddenKeywords.newValue);
+    if (!areListsEqual(config.hiddenKeywords, nextHiddenKeywords)) {
+      config.hiddenKeywords = nextHiddenKeywords;
+      filterSettingsChanged = true;
+      shouldProcess = true;
+    }
   }
   if (changes.activeFilterPresets) {
-    config.activeFilterPresets = sanitizePresetState(
+    const nextActiveFilterPresets = sanitizePresetState(
       changes.activeFilterPresets.newValue,
     );
+    if (!arePresetStatesEqual(config.activeFilterPresets, nextActiveFilterPresets)) {
+      config.activeFilterPresets = nextActiveFilterPresets;
+      refreshActiveFilterPresetCache();
+      filterSettingsChanged = true;
+      shouldProcess = true;
+    }
   }
   if (changes.extensionActive) {
-    config.extensionActive = Boolean(changes.extensionActive.newValue);
+    const nextExtensionActive = Boolean(changes.extensionActive.newValue);
+    if (config.extensionActive !== nextExtensionActive) {
+      config.extensionActive = nextExtensionActive;
+      shouldProcess = true;
+    }
   }
   if (
     !changes.hiddenSellers &&
@@ -1622,7 +2402,8 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     !changes.extensionActive
   )
     return;
-  void processItems();
+  if (filterSettingsChanged) markFilterSettingsChanged();
+  if (shouldProcess) processItems();
 });
 
 function isBetterFabManagedNode(node) {
@@ -1631,51 +2412,142 @@ function isBetterFabManagedNode(node) {
     : node.parentElement;
   if (!element) return false;
 
-  return Boolean(
-    element.closest(
-      `.${IGNORE_SELLER_BUTTON_CLASS}, .${SELLER_PAGE_BUTTON_CLASS}, .${SELLER_PROFILE_CLASS}, .${SELLER_ROW_CLASS}`,
-    ),
+  return Boolean(closestBetterFabManagedElement(element));
+}
+
+function getRelevantMutationElement(node) {
+  const element = node instanceof Element
+    ? node
+    : node.parentElement;
+  if (!element || element === document.body || isBetterFabManagedNode(element)) {
+    return null;
+  }
+
+  return element;
+}
+
+function addChangedElementCards(element, changedCards) {
+  if (!element) {
+    return false;
+  }
+
+  if (isListingNodeElement(element)) {
+    const card = getCardFromListingNode(element);
+    if (card) changedCards.add(card);
+    return Boolean(card);
+  }
+
+  if (addListingDescendantCards(element, changedCards)) {
+    return true;
+  }
+
+  let current = element;
+  let attempts = 0;
+  while (current && current !== document.body && attempts < 8) {
+    const listingNodes = getListingDescendantNodes(current, 2);
+    const listingCount = listingNodes.length;
+    if (listingCount === 1) {
+      const card = getCardFromListingNode(listingNodes[0]);
+      if (card) changedCards.add(card);
+      return Boolean(card);
+    }
+    if (listingCount > 1) return false;
+
+    current = current.parentElement;
+    attempts += 1;
+  }
+
+  return false;
+}
+
+function addChangedNodeCards(node, changedCards) {
+  return addChangedElementCards(
+    getRelevantMutationElement(node),
+    changedCards,
   );
 }
 
-function isBetterFabOnlyMutation(mutation) {
-  const changedNodes = [
-    ...Array.from(mutation.addedNodes),
-    ...Array.from(mutation.removedNodes),
-  ];
+function collectChangedMutationNode(node, changedCards) {
+  const element = getRelevantMutationElement(node);
+  if (!element) return 0;
+  return addChangedElementCards(element, changedCards) ? 2 : 1;
+}
 
-  return changedNodes.length > 0 &&
-    changedNodes.every((node) => isBetterFabManagedNode(node));
+function collectChangedListingCards(mutations, includeRemovedNodes = false) {
+  const changedCards = new Set();
+
+  for (const mutation of mutations) {
+    const addedNodeCount = mutation.addedNodes.length;
+    if (addedNodeCount === 0) {
+      if (!includeRemovedNodes || mutation.removedNodes.length === 0) {
+        continue;
+      }
+    }
+
+    let foundChangedCard = false;
+    let foundRelevantMutationNode = false;
+    for (const node of mutation.addedNodes) {
+      const collectionStatus = collectChangedMutationNode(node, changedCards);
+      if (collectionStatus === 0) continue;
+      foundRelevantMutationNode = true;
+      if (collectionStatus === 2) foundChangedCard = true;
+    }
+    if (includeRemovedNodes) {
+      for (const node of mutation.removedNodes) {
+        const collectionStatus = collectChangedMutationNode(node, changedCards);
+        if (collectionStatus === 0) continue;
+        foundRelevantMutationNode = true;
+        if (collectionStatus === 2) foundChangedCard = true;
+      }
+    }
+
+    if (foundRelevantMutationNode && !foundChangedCard) {
+      addChangedNodeCards(mutation.target, changedCards);
+    }
+  }
+
+  return changedCards;
 }
 
 let debounceTimeout = null;
 let idleCallbackId = null;
+let pendingMutationCards = new Set();
 
-function clearScheduledProcessItems() {
-  if (debounceTimeout !== null) {
-    clearTimeout(debounceTimeout);
-    debounceTimeout = null;
-  }
+function mergePendingMutationCards(targetCards) {
+  if (pendingMutationCards.size === 0) return targetCards;
 
-  if (
-    idleCallbackId !== null &&
-    typeof window.cancelIdleCallback === "function"
-  ) {
-    window.cancelIdleCallback(idleCallbackId);
-    idleCallbackId = null;
+  for (const card of pendingMutationCards) {
+    targetCards.add(card);
   }
+  pendingMutationCards = new Set();
+  return targetCards;
 }
 
 function scheduleProcessItemsFromMutation() {
-  clearScheduledProcessItems();
+  if (debounceTimeout !== null || idleCallbackId !== null) return;
+
   debounceTimeout = setTimeout(() => {
     debounceTimeout = null;
 
-    if (!config.extensionActive) return;
+    if (!config.extensionActive) {
+      pendingMutationCards = new Set();
+      return;
+    }
 
-    const listingSetSignature = getListingSetSignature();
+    const currentCardProcessingState = getCardProcessingState();
+    if (!currentCardProcessingState.hasWork) {
+      pendingMutationCards = new Set();
+      return;
+    }
+
+    const targetCards = pendingMutationCards;
+    pendingMutationCards = new Set();
+    const listingSetSignature = targetCards.size > 0
+      ? null
+      : getListingSetSignature();
     const timeSinceLastProcess = Date.now() - lastProcessItemsCompletedAt;
     if (
+      targetCards.size === 0 &&
       listingSetSignature === lastProcessedListingSignature &&
       timeSinceLastProcess < STABLE_LISTING_REPROCESS_INTERVAL_MS
     ) {
@@ -1686,23 +2558,50 @@ function scheduleProcessItemsFromMutation() {
       idleCallbackId = window.requestIdleCallback(
         () => {
           idleCallbackId = null;
-          void processItems();
+          processItems(
+            listingSetSignature,
+            mergePendingMutationCards(targetCards),
+            currentCardProcessingState,
+          );
         },
         { timeout: MUTATION_PROCESS_IDLE_TIMEOUT_MS },
       );
       return;
     }
 
-    void processItems();
+    processItems(listingSetSignature, targetCards, currentCardProcessingState);
   }, MUTATION_PROCESS_DEBOUNCE_MS);
 }
 
 const observer = new MutationObserver((mutations) => {
-  if (mutations.every((mutation) => isBetterFabOnlyMutation(mutation))) {
-    return;
-  }
+  if (!config.extensionActive) return;
 
-  scheduleProcessItemsFromMutation();
+  const pathname = window.location.pathname;
+  const isSellerPage = pathname.startsWith("/sellers/");
+  const potentialStarSortWork = isSellerPage
+    ? false
+    : hasPotentialStarSortWork();
+  if (!hasPotentialCardProcessingWork(
+    pathname,
+    potentialStarSortWork,
+    isSellerPage,
+  )) return;
+
+  const shouldTrackRemovedCards = isSellerPage || potentialStarSortWork;
+  const changedCards = collectChangedListingCards(
+    mutations,
+    shouldTrackRemovedCards,
+  );
+  if (!changedCards.size) return;
+
+  let addedPendingCard = false;
+  for (const card of changedCards) {
+    if (pendingMutationCards.has(card)) continue;
+    markCardContentChanged(card);
+    pendingMutationCards.add(card);
+    addedPendingCard = true;
+  }
+  if (addedPendingCard) scheduleProcessItemsFromMutation();
 });
 
 observer.observe(document.body, {
