@@ -12,7 +12,6 @@ let config = {
   activeFilterPresets: {
     "no-ai": false,
     "rated-4plus-3-reviews": false,
-    "plugins-only": false,
   },
   extensionActive: true,
 };
@@ -53,20 +52,8 @@ const PRESET_KEYWORDS = {
   ],
   aiUrlOrLabel:
     /(?:^|[\s-])ai[-\s](?:art|assets?|model|generator|generated|generated-content)(?:\b|$)|\/channels\/ai\b/i,
-  plugin: /\bplugins?\b|\bplug-?in\b/i,
-  pluginPath:
-    /\/(?:products?|listings)\/[^/?#]*plug(?:-?|_)?ins?[^/?#]*/i,
-  pluginCategory: /\bplugin|plug-?in\b/i,
 };
-const LISTING_PLUGIN_CACHE = new Map();
 const CARD_METRICS_CACHE = new WeakMap();
-const LISTING_PLUGIN_CACHE_STORAGE_KEY = "betterFabListingPluginCache";
-const LISTING_PLUGIN_CACHE_MAX_ENTRIES = 500;
-let listingPluginCacheSaveTimeout = null;
-const LISTING_PLUGIN_TEXT_MARKERS = [
-  /\btools?\s*(?:&|&amp;|and)\s*plugins?\b/i,
-  /\bplugin(s)?\b/i,
-];
 const FILTER_PRESET_CONCURRENCY = 8;
 const LIBRARY_BUTTON_SELECTOR =
   "button, a[role='button'], [role='button'], [data-action], [data-testid], [data-test], a[href], [aria-label], [title]";
@@ -138,12 +125,6 @@ const FILTER_PRESETS = [
       metrics.rating !== null &&
       metrics.rating >= 4,
   },
-  {
-    id: "plugins-only",
-    type: "include",
-    matches: async (metrics, context) =>
-      isPluginsOnlyMatch(metrics, context?.signal),
-  },
 ];
 
 function normalizeListingPath(path) {
@@ -172,7 +153,6 @@ function sanitizePresetState(rawState) {
   const defaults = {
     "no-ai": false,
     "rated-4plus-3-reviews": false,
-    "plugins-only": false,
   };
 
   if (!rawState || typeof rawState !== "object" || Array.isArray(rawState)) {
@@ -910,126 +890,8 @@ function getCardMetrics(card) {
   return metrics;
 }
 
-function isPluginsOnlyTextMatch(metrics) {
-  return (
-    PRESET_KEYWORDS.plugin.test(metrics.searchText) ||
-    PRESET_KEYWORDS.pluginPath.test(metrics.productPath || "") ||
-    PRESET_KEYWORDS.pluginCategory.test(metrics.pluginMetaText || "")
-  );
-}
-
-function extractListingPath(metrics) {
-  return normalizeListingPath(metrics.productPath || "");
-}
-
-function hasPluginMarkerInText(htmlText) {
-  const normalizedText = String(htmlText || "").toLowerCase();
-  return LISTING_PLUGIN_TEXT_MARKERS.some((pattern) =>
-    pattern.test(normalizedText),
-  );
-}
-
-function getListingPluginCacheSnapshot() {
-  const completedEntries = Array.from(LISTING_PLUGIN_CACHE.entries())
-    .filter(([, value]) => typeof value === "boolean")
-    .slice(-LISTING_PLUGIN_CACHE_MAX_ENTRIES);
-
-  return Object.fromEntries(completedEntries);
-}
-
-function scheduleListingPluginCacheSave() {
-  clearTimeout(listingPluginCacheSaveTimeout);
-  listingPluginCacheSaveTimeout = setTimeout(() => {
-    chrome.storage.local
-      .set({
-        [LISTING_PLUGIN_CACHE_STORAGE_KEY]: getListingPluginCacheSnapshot(),
-      })
-      .catch(() => {});
-  }, 300);
-}
-
-function setListingPluginCacheResult(normalizedPath, isPlugin) {
-  LISTING_PLUGIN_CACHE.delete(normalizedPath);
-  LISTING_PLUGIN_CACHE.set(normalizedPath, Boolean(isPlugin));
-  scheduleListingPluginCacheSave();
-}
-
-function loadListingPluginCache() {
-  chrome.storage.local
-    .get(LISTING_PLUGIN_CACHE_STORAGE_KEY)
-    .then((data) => {
-      const cached = data[LISTING_PLUGIN_CACHE_STORAGE_KEY];
-      if (!cached || typeof cached !== "object" || Array.isArray(cached)) return;
-
-      Object.entries(cached).forEach(([path, isPlugin]) => {
-        if (typeof isPlugin !== "boolean") return;
-        if (LISTING_PLUGIN_CACHE.has(path)) return;
-        LISTING_PLUGIN_CACHE.set(path, isPlugin);
-      });
-    })
-    .catch(() => {});
-}
-
 function isAbortError(err) {
   return err?.name === "AbortError";
-}
-
-async function isListingKnownToBePlugin(listingPath, signal) {
-  const normalizedPath = extractListingPath({ productPath: listingPath });
-  if (!normalizedPath || !normalizedPath.startsWith("/listings/")) return false;
-
-  const cached = LISTING_PLUGIN_CACHE.get(normalizedPath);
-  if (cached !== undefined) return cached;
-
-  const resolveCheck = (async () => {
-    try {
-      const response = await fetch(`${window.location.origin}${normalizedPath}`, {
-        credentials: "include",
-        signal,
-      });
-      if (!response.ok) return false;
-
-      const htmlText = await response.text();
-      if (hasPluginMarkerInText(htmlText)) return true;
-
-      try {
-        const parsedDoc = new DOMParser().parseFromString(htmlText, "text/html");
-        const titleText = parsedDoc.querySelector("title")?.textContent || "";
-        if (hasPluginMarkerInText(titleText)) return true;
-        return hasPluginMarkerInText(parsedDoc.body?.textContent || "");
-      } catch (err) {
-        return false;
-      }
-    } catch (err) {
-      if (isAbortError(err)) throw err;
-      return false;
-    }
-  })();
-
-  LISTING_PLUGIN_CACHE.set(normalizedPath, resolveCheck);
-  try {
-    const isPlugin = await resolveCheck;
-    setListingPluginCacheResult(normalizedPath, isPlugin);
-    return isPlugin;
-  } catch (err) {
-    if (isAbortError(err)) {
-      if (LISTING_PLUGIN_CACHE.get(normalizedPath) === resolveCheck) {
-        LISTING_PLUGIN_CACHE.delete(normalizedPath);
-      }
-      throw err;
-    }
-
-    setListingPluginCacheResult(normalizedPath, false);
-    return false;
-  }
-}
-
-async function isPluginsOnlyMatch(metrics, signal) {
-  if (!metrics) return false;
-  if (isPluginsOnlyTextMatch(metrics)) return true;
-
-  if (!extractListingPath(metrics)) return false;
-  return isListingKnownToBePlugin(extractListingPath(metrics), signal);
 }
 
 function normalizeSortText(value) {
@@ -1636,8 +1498,6 @@ async function processItems() {
     applyStarReviewSort(entries);
   }
 }
-
-loadListingPluginCache();
 
 chrome.storage.local
   .get([

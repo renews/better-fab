@@ -30,7 +30,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 	const PRESET_DEFINITIONS = [
 		{ id: "no-ai", label: "No AI-generated content" },
 		{ id: "rated-4plus-3-reviews", label: "4★+ with 3+ reviews" },
-		{ id: "plugins-only", label: "plugins only" },
 	];
 
 	const PRESET_STORAGE_DEFAULTS = PRESET_DEFINITIONS.reduce(
