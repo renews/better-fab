@@ -10,6 +10,12 @@ let config = {
   showHideSellerButtons: true,
   starSortModeSelector: "",
   starSortModeMatch: "",
+  activeFilterPresets: {
+    "no-ai": false,
+    "on-sale": false,
+    "rated-4plus-3-reviews": false,
+    "plugins-only": false,
+  },
 };
 
 const STAR_SORT_INDICATOR = /rating|reviews?|stars?/i;
@@ -22,6 +28,8 @@ const STAR_SORT_QUERY_KEYS = [
 ];
 const STAR_SORT_QUERY_FRAGMENT = "ratings.averagerating";
 const THUMBNAIL_SELECTOR = ".fabkit-Thumbnail-root";
+const PRODUCT_LINK_SELECTOR =
+  'a[href^="/products/"], a[href*="://www.fab.com/products/"], a[href*="://fab.com/products/"]';
 const IGNORE_SELLER_CARD_CLASS = "better-fab-ignore-seller-card";
 const IGNORE_SELLER_BUTTON_CLASS = "better-fab-ignore-seller-btn";
 const SELLER_PROFILE_CLASS = "better-fab-seller-profile";
@@ -31,6 +39,51 @@ const SELLER_PAGE_BUTTON_CLASS = "better-fab-seller-page-ignore-btn";
 const SELLER_ROW_CLASS = "better-fab-seller-row";
 const FAB_RATING_COUNT_PATTERN =
   /(?:^|[^\d.])([0-5](?:\.\d+)?)\s*\((\d{1,3}(?:[.,]\d{3})+|\d+(?:\.\d+)?\s*[kKmM]|\d+)\)/i;
+const PRESET_KEYWORDS = {
+  ai: [
+    /\bai[\s-]?generated\b/i,
+    /\bai[-\s]?assisted\b/i,
+    /\b(?:created|generated|made|produced)\s+(?:with|by|using)\s+(?:an?\s*)?(?:artificial\s+intelligence|generative\s+ai|text[-\s]?to[-\s]?image|ai)\b/i,
+    /\b(?:text[-\s]?to[-\s]?image|image[-\s]?to[-\s]?image)\b/i,
+    /\b(?:midjourney|stable\s*diffusion|dall[-\s]?e|sora|chatgpt|runway|replicate|civitai|leonardo)\b/i,
+  ],
+  aiUrlOrLabel:
+    /(?:^|[\s-])ai[-\s](?:art|assets?|model|generator|generated|generated-content)(?:\b|$)|\/channels\/ai\b/i,
+  sale: /\b(?:\d{1,3}\s*%\s*off|on\s+sale|save\s+[\w\d%+.-]+\s*|\bdiscount\b|reduced|now\s+\$\s*\d|was\s+\$\s*\d|price.?dropped)\b/i,
+  plugin: /\bplugins?\b|\bplug-?in\b/i,
+  pluginPath: /\/products?\/[^/?#]*plug(?:-?|_)?ins?[^/?#]*/i,
+};
+
+const FILTER_PRESETS = [
+  {
+    id: "no-ai",
+    type: "exclude",
+    matches: (metrics) =>
+      PRESET_KEYWORDS.ai.some((pattern) => pattern.test(metrics.searchText)) ||
+      PRESET_KEYWORDS.aiUrlOrLabel.test(metrics.searchText),
+  },
+  {
+    id: "on-sale",
+    type: "include",
+    matches: (metrics) => PRESET_KEYWORDS.sale.test(metrics.searchText),
+  },
+  {
+    id: "rated-4plus-3-reviews",
+    type: "include",
+    matches: (metrics) =>
+      metrics.reviewCount !== null &&
+      metrics.reviewCount >= 3 &&
+      metrics.rating !== null &&
+      metrics.rating >= 4,
+  },
+  {
+    id: "plugins-only",
+    type: "include",
+    matches: (metrics) =>
+      PRESET_KEYWORDS.plugin.test(metrics.searchText) ||
+      PRESET_KEYWORDS.pluginPath.test(metrics.productPath || ""),
+  },
+];
 
 function sanitizeList(values) {
   if (!Array.isArray(values)) return [];
@@ -38,6 +91,53 @@ function sanitizeList(values) {
     .map((value) => String(value || "").trim().toLowerCase())
     .filter(Boolean);
   return [...new Set(sanitized)];
+}
+
+function sanitizePresetState(rawState) {
+  const defaults = {
+    "no-ai": false,
+    "on-sale": false,
+    "rated-4plus-3-reviews": false,
+    "plugins-only": false,
+  };
+
+  if (!rawState || typeof rawState !== "object" || Array.isArray(rawState)) {
+    return defaults;
+  }
+
+  return FILTER_PRESETS.reduce((state, preset) => {
+    state[preset.id] = Boolean(rawState[preset.id]);
+    return state;
+  }, defaults);
+}
+
+function hasActivePreset(id) {
+  return Boolean(config.activeFilterPresets?.[id]);
+}
+
+function isHiddenByFilterPresets(metrics) {
+  const hasActiveIncludes = FILTER_PRESETS.some(
+    (preset) => preset.type === "include" && hasActivePreset(preset.id),
+  );
+
+  if (
+    FILTER_PRESETS.some(
+      (preset) =>
+        preset.type === "exclude" &&
+        hasActivePreset(preset.id) &&
+        preset.matches(metrics),
+    )
+  ) {
+    return true;
+  }
+
+  if (!hasActiveIncludes) return false;
+
+  return FILTER_PRESETS.every((preset) =>
+    preset.type === "include" && hasActivePreset(preset.id)
+      ? preset.matches(metrics)
+      : true,
+  );
 }
 
 function getSellerLink(card) {
@@ -168,26 +268,69 @@ function parseRating(value) {
   return null;
 }
 
-function getCardFromThumbnail(thumb) {
-  let node = thumb.parentElement;
+function getCardFromListingNode(listingNode) {
+  if (!listingNode) return null;
 
-  while (node && node !== document.body) {
-    const thumbnailCount = node.querySelectorAll?.(THUMBNAIL_SELECTOR).length || 0;
-    if (thumbnailCount === 1 && parseFabRatingCount(node.textContent || "")) {
-      return node;
+  if (listingNode.classList?.contains("fabkit-Thumbnail-root")) {
+    let node = listingNode.parentElement;
+
+    while (node && node !== document.body) {
+      const thumbnailCount =
+        node.querySelectorAll?.(THUMBNAIL_SELECTOR).length || 0;
+      if (thumbnailCount === 1 && parseFabRatingCount(node.textContent || "")) {
+        return node;
+      }
+      node = node.parentElement;
     }
-    node = node.parentElement;
+    return listingNode.parentElement;
   }
 
-  return thumb.parentElement;
+  let node = listingNode;
+  let attempts = 0;
+
+  while (node && node !== document.body && attempts < 16) {
+    const siblingLinks =
+      node.querySelectorAll?.(PRODUCT_LINK_SELECTOR).length || 0;
+    const childThumbnails =
+      node.querySelectorAll?.(THUMBNAIL_SELECTOR).length || 0;
+    const hasText = (node.textContent || "").trim().length > 0;
+    const isCardContainer = node.matches?.("article, section, li, div");
+
+    if (
+      hasText &&
+      ((childThumbnails === 1 && parseFabRatingCount(node.textContent || "")) ||
+        (siblingLinks === 1 && isCardContainer) ||
+        node.matches?.(PRODUCT_LINK_SELECTOR))
+    ) {
+      return node;
+    }
+
+    node = node.parentElement;
+    attempts += 1;
+  }
+
+  return listingNode.parentElement;
 }
 
 function getCardMetrics(card) {
   const cardText = getCardText(card);
+  const productLink = card.querySelector(PRODUCT_LINK_SELECTOR);
+  const productPath = (() => {
+    if (!productLink?.getAttribute) return "";
+    const href = productLink.getAttribute("href");
+    if (!href) return "";
+
+    try {
+      return new URL(href, window.location.origin).pathname.toLowerCase();
+    } catch (err) {
+      return "";
+    }
+  })();
   return {
     sellerName: getSellerName(card),
     reviewCount: parseReviewCount(cardText),
     rating: parseRating(cardText),
+    productPath,
     searchText: cardText,
   };
 }
@@ -643,12 +786,14 @@ function processItems() {
   const isSellerPage = pathname.startsWith("/sellers/");
 
   const shouldBypassFilters = isHomePage || isLimitedTimeFreePage;
-  const thumbnails = document.querySelectorAll(THUMBNAIL_SELECTOR);
+  const listingNodes = document.querySelectorAll(
+    `${THUMBNAIL_SELECTOR}, ${PRODUCT_LINK_SELECTOR}`,
+  );
   const entries = [];
   const processedCards = new Set();
 
-  thumbnails.forEach((thumb, index) => {
-    const card = getCardFromThumbnail(thumb);
+  listingNodes.forEach((item, index) => {
+    const card = getCardFromListingNode(item);
     if (!card) return;
     if (processedCards.has(card)) return;
     processedCards.add(card);
@@ -692,6 +837,10 @@ function processItems() {
       if (!shouldHide && isMinimumReviewsFilterTriggered(metrics)) {
         shouldHide = true;
       }
+
+      if (!shouldHide && isHiddenByFilterPresets(metrics)) {
+        shouldHide = true;
+      }
     }
 
     if (shouldHide) {
@@ -727,6 +876,7 @@ chrome.storage.local
     "showHideSellerButtons",
     "starSortModeSelector",
     "starSortModeMatch",
+    "activeFilterPresets",
   ])
   .then((data) => {
     if (data.filterActive !== undefined) config.filterActive = data.filterActive;
@@ -752,6 +902,11 @@ chrome.storage.local
       config.starSortModeMatch = String(data.starSortModeMatch || "")
         .trim()
         .toLowerCase();
+    if (data.activeFilterPresets !== undefined) {
+      config.activeFilterPresets = sanitizePresetState(
+        data.activeFilterPresets,
+      );
+    }
     processItems();
   });
 
@@ -766,6 +921,7 @@ chrome.runtime.onMessage.addListener((request) => {
     config.hiddenKeywords = sanitizeList(request.hiddenKeywords);
     config.sortStarsByReviewCount = request.sortStarsByReviewCount;
     config.showHideSellerButtons = request.showHideSellerButtons !== false;
+    config.activeFilterPresets = sanitizePresetState(request.activeFilterPresets);
     config.starSortModeSelector =
       typeof request.starSortModeSelector === "string"
         ? request.starSortModeSelector.trim()
@@ -792,7 +948,17 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (changes.hiddenKeywords) {
     config.hiddenKeywords = sanitizeList(changes.hiddenKeywords.newValue);
   }
-  if (!changes.hiddenSellers && !changes.hiddenKeywords) return;
+  if (changes.activeFilterPresets) {
+    config.activeFilterPresets = sanitizePresetState(
+      changes.activeFilterPresets.newValue,
+    );
+  }
+  if (
+    !changes.hiddenSellers &&
+    !changes.hiddenKeywords &&
+    !changes.activeFilterPresets
+  )
+    return;
   processItems();
 });
 

@@ -20,6 +20,19 @@ document.addEventListener("DOMContentLoaded", async () => {
 		"toggle-star-review-sort",
 	);
 	const minReviewsInput = document.getElementById("min-reviews-input");
+	const presetList = document.getElementById("preset-list");
+
+	const PRESET_DEFINITIONS = [
+		{ id: "no-ai", label: "No AI-generated content" },
+		{ id: "on-sale", label: "on sale" },
+		{ id: "rated-4plus-3-reviews", label: "4★+ with 3+ reviews" },
+		{ id: "plugins-only", label: "plugins only" },
+	];
+
+	const PRESET_STORAGE_DEFAULTS = PRESET_DEFINITIONS.reduce(
+		(acc, preset) => ({ ...acc, [preset.id]: false }),
+		{},
+	);
 
 	const sellerInput = document.getElementById("seller-input");
 	const addSellerBtn = document.getElementById("add-seller-btn");
@@ -44,6 +57,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		"showHideSellerButtons",
 		"minimumReviewCount",
 		"hiddenKeywords",
+		"activeFilterPresets",
 	]);
 
 	let filterActive = data.filterActive !== false;
@@ -60,6 +74,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 		: 0;
 	let hiddenSellers = data.hiddenSellers || [];
 	let hiddenKeywords = data.hiddenKeywords || [];
+	let activeFilterPresets = sanitizePresetState(data.activeFilterPresets);
 
 	toggleSaved.checked = filterActive;
 	toggleSavedSellerPage.checked = applySavedFilterOnSellerPage;
@@ -68,6 +83,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	toggleLibrarySeller.checked = applySellerFilterInLibrary;
 	toggleStarReviewSort.checked = sortStarsByReviewCount;
 	minReviewsInput.value = String(minimumReviewCount);
+	renderPresetList();
 	renderList(sellerList, hiddenSellers, onSellerRemoved);
 	renderList(keywordList, hiddenKeywords, onKeywordRemoved);
 
@@ -86,6 +102,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 					showHideSellerButtons,
 					minimumReviewCount,
 					hiddenKeywords,
+					activeFilterPresets,
 				})
 				.catch(() => {});
 		}
@@ -102,6 +119,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 			showHideSellerButtons,
 			minimumReviewCount,
 			hiddenKeywords,
+			activeFilterPresets,
 		});
 	}
 
@@ -127,6 +145,41 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 			li.appendChild(removeBtn);
 			listElement.appendChild(li);
+		});
+	}
+
+	function sanitizePresetState(rawState) {
+		const sanitized = { ...PRESET_STORAGE_DEFAULTS };
+		if (!rawState || typeof rawState !== "object" || Array.isArray(rawState))
+			return sanitized;
+
+		PRESET_DEFINITIONS.forEach((preset) => {
+			sanitized[preset.id] = Boolean(rawState[preset.id]);
+		});
+
+		return sanitized;
+	}
+
+	function renderPresetList() {
+		presetList.innerHTML = "";
+		PRESET_DEFINITIONS.forEach((preset) => {
+			const row = document.createElement("label");
+			row.className = "toggle-row preset-row";
+
+			const label = document.createElement("span");
+			label.textContent = preset.label;
+
+			const checkbox = document.createElement("input");
+			checkbox.type = "checkbox";
+			checkbox.checked = activeFilterPresets[preset.id];
+			checkbox.addEventListener("change", async (e) => {
+				activeFilterPresets[preset.id] = e.target.checked;
+				await updateStorage();
+				await broadcastUpdate();
+			});
+
+			row.append(label, checkbox);
+			presetList.appendChild(row);
 		});
 	}
 
