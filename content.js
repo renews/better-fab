@@ -58,6 +58,7 @@ const PRESET_KEYWORDS = {
   pluginCategory: /\bplugin|plug-?in\b/i,
 };
 const LISTING_PLUGIN_CACHE = new Map();
+const CARD_METRICS_CACHE = new WeakMap();
 const LISTING_PLUGIN_TEXT_MARKERS = [
   /\btools?\s*(?:&|&amp;|and)\s*plugins?\b/i,
   /\bplugin(s)?\b/i,
@@ -230,8 +231,8 @@ function getSellerNameFromPathname(pathname) {
   }
 }
 
-function getCardText(card) {
-  let text = card.textContent || "";
+function getCardText(card, initialText = null) {
+  let text = initialText === null ? card.textContent || "" : initialText;
 
   const attrElements = card.querySelectorAll(
     "[aria-label], [title], [alt], [data-tip], [data-value], [data-type], [data-category], [data-kind], [data-item-type], [data-tags]",
@@ -829,9 +830,26 @@ function getCardFromListingNode(listingNode) {
   return listingNode.parentElement;
 }
 
-function getCardMetrics(card) {
-  const cardText = getCardText(card);
+function getCardMetricsSignature(card) {
   const productLink = card.querySelector(PRODUCT_OR_LISTING_LINK_SELECTOR);
+  const rawText = card.textContent || "";
+  const href = productLink?.getAttribute
+    ? productLink.getAttribute("href") || ""
+    : "";
+
+  return {
+    productLink,
+    rawText,
+    signature: `${rawText}\u001f${href}`,
+  };
+}
+
+function getCardMetrics(card) {
+  const { productLink, rawText, signature } = getCardMetricsSignature(card);
+  const cached = CARD_METRICS_CACHE.get(card);
+  if (cached?.signature === signature) return cached.metrics;
+
+  const cardText = getCardText(card, rawText);
 
   const getPathFromHref = (href) => {
     if (!href) return "";
@@ -872,7 +890,7 @@ function getCardMetrics(card) {
     return metaParts.join(" ");
   })();
 
-  return {
+  const metrics = {
     sellerName: getSellerName(card),
     reviewCount: parseReviewCount(cardText),
     rating: parseRating(cardText),
@@ -880,6 +898,9 @@ function getCardMetrics(card) {
     pluginMetaText,
     searchText: cardText,
   };
+  CARD_METRICS_CACHE.set(card, { signature, metrics });
+
+  return metrics;
 }
 
 function isPluginsOnlyTextMatch(metrics) {
