@@ -1,12 +1,65 @@
+const ICON_PATHS = {
+  16: "logo16.png",
+  48: "logo48.png",
+  128: "logo128.png",
+};
+const BASE_ICON_BITMAPS = new Map();
+
+async function loadBaseIcon(size) {
+  const cached = BASE_ICON_BITMAPS.get(size);
+  if (cached) return cached;
+
+  const response = await fetch(chrome.runtime.getURL(ICON_PATHS[size]));
+  const blob = await response.blob();
+  const bitmap = await createImageBitmap(blob);
+  BASE_ICON_BITMAPS.set(size, bitmap);
+  return bitmap;
+}
+
+async function drawStatusIcon(size, isActive) {
+  const canvas = new OffscreenCanvas(size, size);
+  const context = canvas.getContext("2d");
+  const icon = await loadBaseIcon(size);
+
+  context.drawImage(icon, 0, 0, size, size);
+
+  const radius = Math.max(2, Math.round(size * 0.14));
+  const outline = Math.max(1, Math.round(size * 0.035));
+  const padding = Math.max(1, Math.round(size * 0.12));
+  const center = size - padding - radius;
+
+  context.beginPath();
+  context.arc(center, center, radius + outline, 0, Math.PI * 2);
+  context.fillStyle = "rgba(255, 255, 255, 0.95)";
+  context.fill();
+
+  context.beginPath();
+  context.arc(center, center, radius, 0, Math.PI * 2);
+  context.fillStyle = isActive ? "#00C853" : "#D32F2F";
+  context.fill();
+
+  return context.getImageData(0, 0, size, size);
+}
+
+async function getStatusIconImageData(isActive) {
+  const entries = await Promise.all(
+    Object.keys(ICON_PATHS).map(async (size) => [
+      Number(size),
+      await drawStatusIcon(Number(size), isActive),
+    ]),
+  );
+
+  return Object.fromEntries(entries);
+}
+
 // Function to update the extension icon and title
 async function updateBadge(isActive) {
-  const text = isActive ? "ON" : "OFF";
-  const color = isActive ? "#00C853" : "#555555";
-
-  await chrome.action.setBadgeText({ text: text });
-  await chrome.action.setBadgeBackgroundColor({ color: color });
+  await chrome.action.setBadgeText({ text: "" });
+  await chrome.action.setIcon({
+    imageData: await getStatusIconImageData(isActive),
+  });
   await chrome.action.setTitle({
-    title: isActive ? "Better Fab: ON" : "Better Fab: OFF",
+    title: isActive ? "Better Fab: Active" : "Better Fab: Inactive",
   });
 }
 
