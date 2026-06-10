@@ -1497,6 +1497,8 @@ async function processItems() {
   markListingSetProcessed(listingSetSignature);
 }
 
+chrome.storage.local.remove("betterFabListingPluginCache").catch(() => {});
+
 chrome.storage.local
   .get([
     "filterActive",
