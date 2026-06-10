@@ -15,8 +15,6 @@ let config = {
   },
   extensionActive: true,
 };
-let processItemsRunId = 0;
-let processItemsAbortController = null;
 let lastProcessedListingSignature = "";
 let lastProcessItemsCompletedAt = 0;
 
@@ -56,7 +54,6 @@ const PRESET_KEYWORDS = {
     /(?:^|[\s-])ai[-\s](?:art|assets?|model|generator|generated|generated-content)(?:\b|$)|\/channels\/ai\b/i,
 };
 const CARD_METRICS_CACHE = new WeakMap();
-const FILTER_PRESET_CONCURRENCY = 8;
 const LIBRARY_BUTTON_SELECTOR =
   "button, a[role='button'], [role='button'], [data-action], [data-testid], [data-test], a[href], [aria-label], [title]";
 const LIBRARY_ACTION_HINTS =
@@ -176,7 +173,7 @@ function hasAnyActivePreset() {
   return FILTER_PRESETS.some((preset) => hasActivePreset(preset.id));
 }
 
-async function isHiddenByFilterPresets(metrics, context = {}) {
+function isHiddenByFilterPresets(metrics) {
   const includes = FILTER_PRESETS.filter(
     (preset) => preset.type === "include" && hasActivePreset(preset.id),
   );
@@ -185,13 +182,13 @@ async function isHiddenByFilterPresets(metrics, context = {}) {
   );
 
   for (const preset of excludes) {
-    if (await preset.matches(metrics, context)) return true;
+    if (preset.matches(metrics)) return true;
   }
 
   if (includes.length === 0) return false;
 
   for (const preset of includes) {
-    const result = await preset.matches(metrics, context);
+    const result = preset.matches(metrics);
     if (!result) return true;
   }
 
@@ -893,10 +890,6 @@ function getCardMetrics(card) {
   return metrics;
 }
 
-function isAbortError(err) {
-  return err?.name === "AbortError";
-}
-
 function normalizeSortText(value) {
   return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
@@ -1384,31 +1377,7 @@ function markListingSetProcessed(signature) {
   lastProcessItemsCompletedAt = Date.now();
 }
 
-async function runWithConcurrency(items, limit, worker) {
-  if (!items.length) return;
-
-  let nextIndex = 0;
-  const workers = Array.from(
-    { length: Math.min(limit, items.length) },
-    async () => {
-      while (nextIndex < items.length) {
-        const item = items[nextIndex];
-        nextIndex += 1;
-        await worker(item);
-      }
-    },
-  );
-
-  await Promise.all(workers);
-}
-
 async function processItems() {
-  const runId = processItemsRunId + 1;
-  processItemsRunId = runId;
-  processItemsAbortController?.abort();
-  const abortController = new AbortController();
-  processItemsAbortController = abortController;
-
   const pathname = window.location.pathname;
   const isHomePage = pathname === "/";
   const isLimitedTimeFreePage = pathname.startsWith("/limited-time-free");
@@ -1421,7 +1390,6 @@ async function processItems() {
     `${THUMBNAIL_SELECTOR}, ${PRODUCT_LINK_SELECTOR}`,
   );
   const entries = [];
-  const entriesNeedingPresetCheck = [];
   const processedCards = new Set();
   const shouldRunPresetFilters = !shouldBypassFilters && hasAnyActivePreset();
 
@@ -1484,37 +1452,17 @@ async function processItems() {
         entry.shouldHide = true;
       }
 
-      if (!entry.shouldHide && shouldRunPresetFilters) {
-        entriesNeedingPresetCheck.push(entry);
+      if (
+        !entry.shouldHide &&
+        shouldRunPresetFilters &&
+        isHiddenByFilterPresets(metrics)
+      ) {
+        entry.shouldHide = true;
       }
     }
 
     entries.push(entry);
   }
-
-  await runWithConcurrency(
-    entriesNeedingPresetCheck,
-    FILTER_PRESET_CONCURRENCY,
-    async (entry) => {
-      if (abortController.signal.aborted) return;
-
-      try {
-        if (
-          await isHiddenByFilterPresets(entry.metrics, {
-            signal: abortController.signal,
-          })
-        ) {
-          entry.shouldHide = true;
-        }
-      } catch (err) {
-        if (!isAbortError(err)) throw err;
-      }
-    },
-  );
-
-  if (abortController.signal.aborted) return;
-
-  if (runId !== processItemsRunId) return;
 
   if (!config.extensionActive) {
     disableExtensionManipulations(listingNodes);
