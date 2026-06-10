@@ -16,6 +16,7 @@ let config = {
   },
   extensionActive: true,
 };
+let processItemsRunId = 0;
 
 const STAR_SORT_INDICATOR = /rating|reviews?|stars?/i;
 const STAR_SORT_QUERY_KEYS = [
@@ -61,6 +62,7 @@ const LISTING_PLUGIN_TEXT_MARKERS = [
   /\btools?\s*(?:&|&amp;|and)\s*plugins?\b/i,
   /\bplugin(s)?\b/i,
 ];
+const FILTER_PRESET_CONCURRENCY = 8;
 const FREE_PRICE_PATTERNS = [
   /\$\s*0(?:[.,]\d{1,2})?\b/i,
   /\b0(?:[.,]\d{1,2})?\s*(?:usd|eur|gbp|aud|cad|nzd|brl|mxn|inr|jpy|krw|cny)?\b/i,
@@ -148,6 +150,10 @@ function sanitizePresetState(rawState) {
 
 function hasActivePreset(id) {
   return Boolean(config.activeFilterPresets?.[id]);
+}
+
+function hasAnyActivePreset() {
+  return FILTER_PRESETS.some((preset) => hasActivePreset(preset.id));
 }
 
 async function isHiddenByFilterPresets(metrics) {
@@ -1010,7 +1016,27 @@ function disableExtensionManipulations(listingNodes) {
   existingProfile?.remove();
 }
 
+async function runWithConcurrency(items, limit, worker) {
+  if (!items.length) return;
+
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const item = items[nextIndex];
+        nextIndex += 1;
+        await worker(item);
+      }
+    },
+  );
+
+  await Promise.all(workers);
+}
+
 async function processItems() {
+  const runId = processItemsRunId + 1;
+  processItemsRunId = runId;
   const pathname = window.location.pathname;
   const isHomePage = pathname === "/";
   const isLimitedTimeFreePage = pathname.startsWith("/limited-time-free");
@@ -1022,7 +1048,9 @@ async function processItems() {
     `${THUMBNAIL_SELECTOR}, ${PRODUCT_LINK_SELECTOR}`,
   );
   const entries = [];
+  const entriesNeedingPresetCheck = [];
   const processedCards = new Set();
+  const shouldRunPresetFilters = !shouldBypassFilters && hasAnyActivePreset();
 
   if (!config.extensionActive) {
     disableExtensionManipulations(listingNodes);
@@ -1040,8 +1068,14 @@ async function processItems() {
     if (processedCards.has(card)) continue;
     processedCards.add(card);
 
-    let shouldHide = false;
     const metrics = getCardMetrics(card);
+    const entry = {
+      card,
+      metrics,
+      index,
+      shouldHide: false,
+    };
+
     if (config.showHideSellerButtons) {
       ensureIgnoreSellerButton(card, metrics.sellerName);
     } else {
@@ -1058,41 +1092,56 @@ async function processItems() {
         const isSaved = card.querySelector(
           ".fabkit-Typography--intent-success .edsicon-check-circle-filled",
         );
-        if (isSaved) shouldHide = true;
+        if (isSaved) entry.shouldHide = true;
       }
 
       const shouldRunSellerFilter = !isSellerPage &&
         (!isLibraryPage || config.applySellerFilterInLibrary);
 
-      if (!shouldHide && shouldRunSellerFilter) {
+      if (!entry.shouldHide && shouldRunSellerFilter) {
         if (config.hiddenSellers.includes(metrics.sellerName)) {
-          shouldHide = true;
+          entry.shouldHide = true;
         } else if (hasHiddenKeywordMatch(metrics)) {
-          shouldHide = true;
+          entry.shouldHide = true;
         }
       }
 
-      if (!shouldHide && isMinimumReviewsFilterTriggered(metrics)) {
-        shouldHide = true;
+      if (!entry.shouldHide && isMinimumReviewsFilterTriggered(metrics)) {
+        entry.shouldHide = true;
       }
 
-      if (!shouldHide && (await isHiddenByFilterPresets(metrics))) {
-        shouldHide = true;
+      if (!entry.shouldHide && shouldRunPresetFilters) {
+        entriesNeedingPresetCheck.push(entry);
       }
     }
 
-    if (shouldHide) {
-      card.classList.add("fab-hidden-item");
-    } else {
-      card.classList.remove("fab-hidden-item");
-    }
-
-    entries.push({
-      card,
-      metrics,
-      index,
-    });
+    entries.push(entry);
   }
+
+  await runWithConcurrency(
+    entriesNeedingPresetCheck,
+    FILTER_PRESET_CONCURRENCY,
+    async (entry) => {
+      if (await isHiddenByFilterPresets(entry.metrics)) {
+        entry.shouldHide = true;
+      }
+    },
+  );
+
+  if (runId !== processItemsRunId) return;
+
+  if (!config.extensionActive) {
+    disableExtensionManipulations(listingNodes);
+    return;
+  }
+
+  entries.forEach((entry) => {
+    if (entry.shouldHide) {
+      entry.card.classList.add("fab-hidden-item");
+    } else {
+      entry.card.classList.remove("fab-hidden-item");
+    }
+  });
 
   ensureSellerProfile(isSellerPage, entries);
 
