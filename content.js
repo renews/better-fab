@@ -11,7 +11,6 @@ let config = {
   starSortModeMatch: "",
   activeFilterPresets: {
     "no-ai": false,
-    "on-sale": false,
     "rated-4plus-3-reviews": false,
     "plugins-only": false,
   },
@@ -52,7 +51,6 @@ const PRESET_KEYWORDS = {
   ],
   aiUrlOrLabel:
     /(?:^|[\s-])ai[-\s](?:art|assets?|model|generator|generated|generated-content)(?:\b|$)|\/channels\/ai\b/i,
-  sale: /\b(?:\d{1,3}\s*%\s*off|on\s+sale|save\s+[\w\d%+.-]+\s*|\bdiscount\b|reduced|now\s+\$\s*\d|was\s+\$\s*\d|price.?dropped)\b/i,
   plugin: /\bplugins?\b|\bplug-?in\b/i,
   pluginPath:
     /\/(?:products?|listings)\/[^/?#]*plug(?:-?|_)?ins?[^/?#]*/i,
@@ -92,11 +90,6 @@ const FILTER_PRESETS = [
     matches: (metrics) =>
       PRESET_KEYWORDS.ai.some((pattern) => pattern.test(metrics.searchText)) ||
       PRESET_KEYWORDS.aiUrlOrLabel.test(metrics.searchText),
-  },
-  {
-    id: "on-sale",
-    type: "include",
-    matches: (metrics) => PRESET_KEYWORDS.sale.test(metrics.searchText),
   },
   {
     id: "rated-4plus-3-reviews",
@@ -139,7 +132,6 @@ function sanitizeList(values) {
 function sanitizePresetState(rawState) {
   const defaults = {
     "no-ai": false,
-    "on-sale": false,
     "rated-4plus-3-reviews": false,
     "plugins-only": false,
   };

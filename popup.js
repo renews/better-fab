@@ -29,7 +29,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 	const PRESET_DEFINITIONS = [
 		{ id: "no-ai", label: "No AI-generated content" },
-		{ id: "on-sale", label: "on sale" },
 		{ id: "rated-4plus-3-reviews", label: "4★+ with 3+ reviews" },
 		{ id: "plugins-only", label: "plugins only" },
 	];
