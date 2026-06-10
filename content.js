@@ -17,6 +17,7 @@ let config = {
   extensionActive: true,
 };
 let processItemsRunId = 0;
+let processItemsAbortController = null;
 
 const STAR_SORT_INDICATOR = /rating|reviews?|stars?/i;
 const STAR_SORT_QUERY_KEYS = [
@@ -135,7 +136,8 @@ const FILTER_PRESETS = [
   {
     id: "plugins-only",
     type: "include",
-    matches: async (metrics) => isPluginsOnlyMatch(metrics),
+    matches: async (metrics, context) =>
+      isPluginsOnlyMatch(metrics, context?.signal),
   },
 ];
 
@@ -186,7 +188,7 @@ function hasAnyActivePreset() {
   return FILTER_PRESETS.some((preset) => hasActivePreset(preset.id));
 }
 
-async function isHiddenByFilterPresets(metrics) {
+async function isHiddenByFilterPresets(metrics, context = {}) {
   const includes = FILTER_PRESETS.filter(
     (preset) => preset.type === "include" && hasActivePreset(preset.id),
   );
@@ -195,13 +197,13 @@ async function isHiddenByFilterPresets(metrics) {
   );
 
   for (const preset of excludes) {
-    if (await preset.matches(metrics)) return true;
+    if (await preset.matches(metrics, context)) return true;
   }
 
   if (includes.length === 0) return false;
 
   for (const preset of includes) {
-    const result = await preset.matches(metrics);
+    const result = await preset.matches(metrics, context);
     if (!result) return true;
   }
 
@@ -922,7 +924,11 @@ function hasPluginMarkerInText(htmlText) {
   );
 }
 
-async function isListingKnownToBePlugin(listingPath) {
+function isAbortError(err) {
+  return err?.name === "AbortError";
+}
+
+async function isListingKnownToBePlugin(listingPath, signal) {
   const normalizedPath = extractListingPath({ productPath: listingPath });
   if (!normalizedPath || !normalizedPath.startsWith("/listings/")) return false;
 
@@ -933,6 +939,7 @@ async function isListingKnownToBePlugin(listingPath) {
     try {
       const response = await fetch(`${window.location.origin}${normalizedPath}`, {
         credentials: "include",
+        signal,
       });
       if (!response.ok) return false;
 
@@ -948,22 +955,35 @@ async function isListingKnownToBePlugin(listingPath) {
         return false;
       }
     } catch (err) {
+      if (isAbortError(err)) throw err;
       return false;
     }
   })();
 
   LISTING_PLUGIN_CACHE.set(normalizedPath, resolveCheck);
-  const isPlugin = await resolveCheck;
-  LISTING_PLUGIN_CACHE.set(normalizedPath, isPlugin);
-  return isPlugin;
+  try {
+    const isPlugin = await resolveCheck;
+    LISTING_PLUGIN_CACHE.set(normalizedPath, isPlugin);
+    return isPlugin;
+  } catch (err) {
+    if (isAbortError(err)) {
+      if (LISTING_PLUGIN_CACHE.get(normalizedPath) === resolveCheck) {
+        LISTING_PLUGIN_CACHE.delete(normalizedPath);
+      }
+      throw err;
+    }
+
+    LISTING_PLUGIN_CACHE.set(normalizedPath, false);
+    return false;
+  }
 }
 
-async function isPluginsOnlyMatch(metrics) {
+async function isPluginsOnlyMatch(metrics, signal) {
   if (!metrics) return false;
   if (isPluginsOnlyTextMatch(metrics)) return true;
 
   if (!extractListingPath(metrics)) return false;
-  return isListingKnownToBePlugin(extractListingPath(metrics));
+  return isListingKnownToBePlugin(extractListingPath(metrics), signal);
 }
 
 function normalizeSortText(value) {
@@ -1442,6 +1462,10 @@ async function runWithConcurrency(items, limit, worker) {
 async function processItems() {
   const runId = processItemsRunId + 1;
   processItemsRunId = runId;
+  processItemsAbortController?.abort();
+  const abortController = new AbortController();
+  processItemsAbortController = abortController;
+
   const pathname = window.location.pathname;
   const isHomePage = pathname === "/";
   const isLimitedTimeFreePage = pathname.startsWith("/limited-time-free");
@@ -1527,11 +1551,23 @@ async function processItems() {
     entriesNeedingPresetCheck,
     FILTER_PRESET_CONCURRENCY,
     async (entry) => {
-      if (await isHiddenByFilterPresets(entry.metrics)) {
-        entry.shouldHide = true;
+      if (abortController.signal.aborted) return;
+
+      try {
+        if (
+          await isHiddenByFilterPresets(entry.metrics, {
+            signal: abortController.signal,
+          })
+        ) {
+          entry.shouldHide = true;
+        }
+      } catch (err) {
+        if (!isAbortError(err)) throw err;
       }
     },
   );
+
+  if (abortController.signal.aborted) return;
 
   if (runId !== processItemsRunId) return;
 
