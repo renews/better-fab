@@ -1660,8 +1660,35 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   void processItems();
 });
 
+function isBetterFabManagedNode(node) {
+  const element = node instanceof Element
+    ? node
+    : node.parentElement;
+  if (!element) return false;
+
+  return Boolean(
+    element.closest(
+      `.${IGNORE_SELLER_BUTTON_CLASS}, .${SELLER_PAGE_BUTTON_CLASS}, .${SELLER_PROFILE_CLASS}, .${SELLER_ROW_CLASS}`,
+    ),
+  );
+}
+
+function isBetterFabOnlyMutation(mutation) {
+  const changedNodes = [
+    ...Array.from(mutation.addedNodes),
+    ...Array.from(mutation.removedNodes),
+  ];
+
+  return changedNodes.length > 0 &&
+    changedNodes.every((node) => isBetterFabManagedNode(node));
+}
+
 let debounceTimeout;
-const observer = new MutationObserver(() => {
+const observer = new MutationObserver((mutations) => {
+  if (mutations.every((mutation) => isBetterFabOnlyMutation(mutation))) {
+    return;
+  }
+
   clearTimeout(debounceTimeout);
   debounceTimeout = setTimeout(() => {
     void processItems();
