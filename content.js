@@ -60,6 +60,9 @@ const PRESET_KEYWORDS = {
 };
 const LISTING_PLUGIN_CACHE = new Map();
 const CARD_METRICS_CACHE = new WeakMap();
+const LISTING_PLUGIN_CACHE_STORAGE_KEY = "betterFabListingPluginCache";
+const LISTING_PLUGIN_CACHE_MAX_ENTRIES = 500;
+let listingPluginCacheSaveTimeout = null;
 const LISTING_PLUGIN_TEXT_MARKERS = [
   /\btools?\s*(?:&|&amp;|and)\s*plugins?\b/i,
   /\bplugin(s)?\b/i,
@@ -924,6 +927,47 @@ function hasPluginMarkerInText(htmlText) {
   );
 }
 
+function getListingPluginCacheSnapshot() {
+  const completedEntries = Array.from(LISTING_PLUGIN_CACHE.entries())
+    .filter(([, value]) => typeof value === "boolean")
+    .slice(-LISTING_PLUGIN_CACHE_MAX_ENTRIES);
+
+  return Object.fromEntries(completedEntries);
+}
+
+function scheduleListingPluginCacheSave() {
+  clearTimeout(listingPluginCacheSaveTimeout);
+  listingPluginCacheSaveTimeout = setTimeout(() => {
+    chrome.storage.local
+      .set({
+        [LISTING_PLUGIN_CACHE_STORAGE_KEY]: getListingPluginCacheSnapshot(),
+      })
+      .catch(() => {});
+  }, 300);
+}
+
+function setListingPluginCacheResult(normalizedPath, isPlugin) {
+  LISTING_PLUGIN_CACHE.delete(normalizedPath);
+  LISTING_PLUGIN_CACHE.set(normalizedPath, Boolean(isPlugin));
+  scheduleListingPluginCacheSave();
+}
+
+function loadListingPluginCache() {
+  chrome.storage.local
+    .get(LISTING_PLUGIN_CACHE_STORAGE_KEY)
+    .then((data) => {
+      const cached = data[LISTING_PLUGIN_CACHE_STORAGE_KEY];
+      if (!cached || typeof cached !== "object" || Array.isArray(cached)) return;
+
+      Object.entries(cached).forEach(([path, isPlugin]) => {
+        if (typeof isPlugin !== "boolean") return;
+        if (LISTING_PLUGIN_CACHE.has(path)) return;
+        LISTING_PLUGIN_CACHE.set(path, isPlugin);
+      });
+    })
+    .catch(() => {});
+}
+
 function isAbortError(err) {
   return err?.name === "AbortError";
 }
@@ -963,7 +1007,7 @@ async function isListingKnownToBePlugin(listingPath, signal) {
   LISTING_PLUGIN_CACHE.set(normalizedPath, resolveCheck);
   try {
     const isPlugin = await resolveCheck;
-    LISTING_PLUGIN_CACHE.set(normalizedPath, isPlugin);
+    setListingPluginCacheResult(normalizedPath, isPlugin);
     return isPlugin;
   } catch (err) {
     if (isAbortError(err)) {
@@ -973,7 +1017,7 @@ async function isListingKnownToBePlugin(listingPath, signal) {
       throw err;
     }
 
-    LISTING_PLUGIN_CACHE.set(normalizedPath, false);
+    setListingPluginCacheResult(normalizedPath, false);
     return false;
   }
 }
@@ -1590,6 +1634,8 @@ async function processItems() {
     applyStarReviewSort(entries);
   }
 }
+
+loadListingPluginCache();
 
 chrome.storage.local
   .get([
