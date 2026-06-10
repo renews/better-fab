@@ -63,6 +63,10 @@ const LISTING_PLUGIN_TEXT_MARKERS = [
   /\bplugin(s)?\b/i,
 ];
 const FILTER_PRESET_CONCURRENCY = 8;
+const LIBRARY_BUTTON_SELECTOR =
+  "button, a[role='button'], [role='button'], [data-action], [data-testid], [data-test], a[href], [aria-label], [title]";
+const LIBRARY_ACTION_HINTS =
+  /\b(add|add to|save|save to|saved|get|install|library|collection|wishlist|bookmark)\b/i;
 const FREE_PRICE_PATTERNS = [
   /\$\s*0(?:[.,]\d{1,2})?\b/i,
   /\b0(?:[.,]\d{1,2})?\s*(?:usd|eur|gbp|aud|cad|nzd|brl|mxn|inr|jpy|krw|cny)?\b/i,
@@ -74,9 +78,31 @@ const ADD_LIBRARY_TEXT_PATTERNS = [
   /add\s+to\s+library/i,
   /save\s+to\s+library/i,
   /\badd\s+to\s+collection\b/i,
-  /\bsave to my list\b/i,
-  /\badd/i,
+  /\bsave\s+to\s+my\s+list\b/i,
+  /\bsave\b/i,
+  /\badd\b/i,
+  /\bget\b/i,
+  /\binstalled?\b/i,
 ];
+const LICENSE_MODAL_SELECTOR = 'div[role="dialog"][aria-modal="true"]';
+const LICENSE_MODAL_TITLE_SELECTOR = ".fabkit-Modal-title";
+const LICENSE_FORM_FIELD_SELECTOR =
+  ".fabkit-FormField-root";
+const LICENSE_MODAL_ADD_BUTTON_SELECTOR =
+  ".fabkit-Modal-actions button";
+const LICENSE_MODAL_CLOSE_SELECTOR =
+  ".fabkit-Modal-closeButton";
+const ADD_LIBRARY_ACTION_SELECTOR =
+  "button, a, [role='button'], [data-action], [data-testid], [data-test], [aria-label], [title]";
+const PRICE_ATTRIBUTE_SELECTORS = [
+  "[data-price]",
+  "[data-test='price']",
+  "[data-qa='price']",
+  "[data-testid*='price']",
+  "[itemprop='price']",
+];
+const LICENSE_ACTION_REVEAL_DELAY_MS = 120;
+const ADD_LIBRARY_PROXIMITY_RADIUS_PX = 260;
 const SKIP_LIBRARY_BUTTON_PATTERNS = [
   /\balready\s+in\s+library\b/i,
   /\bin\s+library\b/i,
@@ -84,6 +110,9 @@ const SKIP_LIBRARY_BUTTON_PATTERNS = [
   /\bowned\b/i,
   /\bremove\s+from\s+library\b/i,
 ];
+const LICENSE_NO_MODAL_DEBOUNCE_MIN_MS = 50;
+const LICENSE_NO_MODAL_DEBOUNCE_MAX_MS = 150;
+const LICENSE_MODAL_WAIT_CLOSE_MAX_MS = 1200;
 
 const FILTER_PRESETS = [
   {
@@ -225,11 +254,257 @@ function isFreeByText(value) {
   return FREE_PRICE_PATTERNS.some((pattern) => pattern.test(text));
 }
 
-function isAddLibraryCandidate(element) {
+function hasFreePriceFromCard(card, metrics) {
+  const search = String(metrics.searchText || "").toLowerCase();
+  const selector = PRICE_ATTRIBUTE_SELECTORS.join(", ");
+  const priceNodes = card.querySelectorAll(selector);
+
+  for (const node of priceNodes) {
+    const content = String(
+      node.getAttribute("content") ||
+        node.getAttribute("value") ||
+        node.getAttribute("data-price") ||
+        node.textContent ||
+        "",
+    ).toLowerCase();
+
+    if (FREE_PRICE_PATTERNS.some((pattern) => pattern.test(content))) return true;
+  }
+
+  if (/\b\$\s*0(?:[.,]\d{1,2})?\b|\bfree\b/.test(search)) return true;
+
+  return false;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function randomDebounceDelayMs() {
+  const range = LICENSE_NO_MODAL_DEBOUNCE_MAX_MS - LICENSE_NO_MODAL_DEBOUNCE_MIN_MS;
+  const delta = Math.floor(Math.random() * (range + 1));
+  return LICENSE_NO_MODAL_DEBOUNCE_MIN_MS + delta;
+}
+
+function dispatchInteractionEvents(target) {
+  if (!target) return;
+
+  if (typeof target.focus === "function") target.focus({ preventScroll: true });
+
+  const rect = target.getBoundingClientRect();
+  const clientX = Math.max(1, rect.left + Math.min(rect.width, 1) / 2);
+  const clientY = Math.max(1, rect.top + Math.min(rect.height, 1) / 2);
+
+  ["pointerover", "mouseover", "mouseenter", "mousemove"].forEach((type) => {
+    target.dispatchEvent(
+      new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX,
+        clientY,
+      }),
+    );
+  });
+}
+
+async function revealCardActionControls(card) {
+  const host = card.closest("article, section, li, div") || card;
+  const targets = [
+    card,
+    card.querySelector(THUMBNAIL_SELECTOR),
+    card.querySelector(PRODUCT_OR_LISTING_LINK_SELECTOR),
+    host,
+  ];
+
+  for (let pass = 0; pass < 2; pass += 1) {
+    targets.forEach((target) => dispatchInteractionEvents(target));
+
+    const rect = card.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      const points = [
+        [rect.left + rect.width / 2, rect.top + rect.height / 2],
+        [rect.left + 4, rect.top + 4],
+        [rect.right - 4, rect.top + 4],
+        [rect.left + 4, rect.bottom - 4],
+      ];
+
+      for (const [clientX, clientY] of points) {
+        const hovered = document.elementFromPoint(clientX, clientY);
+        dispatchInteractionEvents(hovered);
+      }
+    }
+
+    await sleep(40);
+  }
+
+  await sleep(LICENSE_ACTION_REVEAL_DELAY_MS);
+}
+
+function isPriceFree(value) {
+  return FREE_PRICE_PATTERNS.some((pattern) =>
+    pattern.test(String(value || "").toLowerCase()),
+  );
+}
+
+function getVisibleLicenseModal() {
+  const dialogs = Array.from(document.querySelectorAll(LICENSE_MODAL_SELECTOR));
+
+  return dialogs.find((dialog) => {
+    if (!dialog?.isConnected) return false;
+
+    const titleElement = dialog.querySelector(LICENSE_MODAL_TITLE_SELECTOR);
+    const legacyTitle = dialog.querySelector("h2");
+    const titleText =
+      String(titleElement?.textContent || legacyTitle?.textContent || "")
+        .toLowerCase();
+    return titleText.includes("license tier");
+  }) || null;
+}
+
+async function waitForLicenseModal(timeoutMs = 900) {
+  const endTime = Date.now() + timeoutMs;
+  while (Date.now() < endTime) {
+    const modal = getVisibleLicenseModal();
+    if (modal) return modal;
+    await sleep(60);
+  }
+
+  return null;
+}
+
+async function waitForLicenseModalToClose(modal, timeoutMs = LICENSE_MODAL_WAIT_CLOSE_MAX_MS) {
+  if (!modal) return;
+
+  const endTime = Date.now() + timeoutMs;
+  while (Date.now() < endTime) {
+    if (!modal.isConnected) return;
+    if (!document.body || !document.body.contains(modal)) return;
+
+    await sleep(60);
+  }
+}
+
+function getLicenseOptionsFromModal(modal) {
+  const fields = Array.from(modal.querySelectorAll(LICENSE_FORM_FIELD_SELECTOR));
+
+  return fields
+    .map((field) => {
+      const label = field.querySelector("label");
+      const labelText = String(label?.textContent || "").toLowerCase();
+      const optionText = String(field.textContent || "").toLowerCase();
+
+      const input =
+        field.querySelector('input[type="radio"], input[type="checkbox"]') ||
+        field.querySelector("label");
+      if (!labelText && !optionText) return null;
+
+      const isPersonal = /\bpersonal\b/.test(labelText);
+      const isProfessional = /\bprofessional\b/.test(labelText);
+      if (!isPersonal && !isProfessional) return null;
+
+      const tier = isProfessional
+        ? "professional"
+        : "personal";
+
+      return {
+        tier,
+        isFree: isPriceFree(optionText),
+        input,
+      };
+    })
+    .filter(Boolean);
+}
+
+function getPreferredLicenseInput(modal) {
+  const options = getLicenseOptionsFromModal(modal);
+  if (!options.length) return null;
+
+  const professional = options.find((option) => option.tier === "professional");
+  const personal = options.find((option) => option.tier === "personal");
+
+  if (professional?.isFree) return professional.input || null;
+  if (personal?.isFree) return personal.input || null;
+
+  return null;
+}
+
+function getLicenseModalAddButton(modal) {
+  const actionButtons = modal.querySelectorAll(LICENSE_MODAL_ADD_BUTTON_SELECTOR);
+  return Array.from(actionButtons).find(
+    (button) =>
+      String(button.textContent || "").trim().toLowerCase().includes("add") ||
+      String(button.getAttribute("aria-label") || "").toLowerCase().includes("add"),
+  );
+}
+
+function closeLicenseModal(modal) {
+  const closeButton = modal.querySelector(`${LICENSE_MODAL_CLOSE_SELECTOR}, button[aria-label="Close"]`);
+  if (closeButton) {
+    closeButton.click();
+    return;
+  }
+
+  const esc = new KeyboardEvent("keydown", {
+    bubbles: true,
+    cancelable: true,
+    key: "Escape",
+    keyCode: 27,
+  });
+  window.dispatchEvent(esc);
+}
+
+async function handleLicenseSelectionForLastClick() {
+  const modal = await waitForLicenseModal();
+  if (!modal) return { status: "none", hadModal: false, modal: null };
+
+  const preferredInput = getPreferredLicenseInput(modal);
+  if (!preferredInput) {
+    closeLicenseModal(modal);
+    return { status: "skipped", hadModal: true, modal };
+  }
+
+  preferredInput.click();
+  await sleep(50);
+
+  let addButton = getLicenseModalAddButton(modal);
+  if (!addButton) {
+    closeLicenseModal(modal);
+    return { status: "skipped", hadModal: true, modal };
+  }
+
+  const endTime = Date.now() + 1200;
+  while (addButton.disabled && Date.now() < endTime) {
+    await sleep(70);
+    addButton = getLicenseModalAddButton(modal);
+    if (!addButton) {
+      closeLicenseModal(modal);
+      return { status: "skipped", hadModal: true, modal };
+    }
+  }
+
+  if (addButton.disabled) {
+    closeLicenseModal(modal);
+    return { status: "skipped", hadModal: true, modal };
+  }
+
+  addButton.click();
+  await sleep(150);
+  return { status: "added", hadModal: true, modal };
+}
+
+function isAddLibraryCandidate(element, options = {}) {
   if (!element) return false;
   if (element.closest(`.${IGNORE_SELLER_BUTTON_CLASS}`)) return false;
   if (element.getAttribute("aria-disabled") === "true") return false;
   if (element.disabled) return false;
+
+  const requireStrictText = options.requireStrictText ?? true;
+
+  if (element.offsetParent === null) {
+    const bounds = element.getBoundingClientRect();
+    if (!bounds.width && !bounds.height) return false;
+  }
 
   const text = String(
     `${element.textContent || ""} ${element.getAttribute("aria-label") || ""} ${
@@ -239,18 +514,25 @@ function isAddLibraryCandidate(element) {
     .toLowerCase()
     .trim();
   if (!text) return false;
+  const href = String(element.getAttribute("href") || "").toLowerCase();
+  if (element.tagName === "A" && href && (href.includes("/products/") || href.includes("/listings/") || href.includes("/sellers/"))) {
+    return false;
+  }
   if (SKIP_LIBRARY_BUTTON_PATTERNS.some((pattern) => pattern.test(text))) {
     return false;
   }
 
-  return (
-    /library/.test(text) &&
-    ADD_LIBRARY_TEXT_PATTERNS.some((pattern) => pattern.test(text))
-  );
+  if (!LIBRARY_ACTION_HINTS.test(text)) return false;
+
+  if (!requireStrictText) {
+    return true;
+  }
+
+  return ADD_LIBRARY_TEXT_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function getAddLibraryButton(card) {
-  const candidates = card.querySelectorAll("button, a[role='button'], a");
+  const candidates = card.querySelectorAll(LIBRARY_BUTTON_SELECTOR);
   for (const candidate of candidates) {
     if (isAddLibraryCandidate(candidate)) return candidate;
   }
@@ -258,30 +540,114 @@ function getAddLibraryButton(card) {
   return null;
 }
 
+function getRectDistance(rectA, rectB) {
+  const deltaX = Math.max(
+    rectA.left - rectB.right,
+    rectB.left - rectA.right,
+    0,
+  );
+  const deltaY = Math.max(
+    rectA.top - rectB.bottom,
+    rectB.top - rectA.bottom,
+    0,
+  );
+  return Math.hypot(deltaX, deltaY);
+}
+
+function sortByProximity(cardRect, candidateRects) {
+  return candidateRects.sort((left, right) => left.distance - right.distance);
+}
+
+function findNearbyAddLibraryButton(card) {
+  const cardRect = card.getBoundingClientRect();
+  if (!cardRect || (!cardRect.width && !cardRect.height)) return null;
+
+  const maxDistance = Math.max(
+    ADD_LIBRARY_PROXIMITY_RADIUS_PX,
+    cardRect.width,
+    cardRect.height,
+  );
+
+  const candidates = Array.from(
+    document.querySelectorAll(ADD_LIBRARY_ACTION_SELECTOR),
+  )
+    .map((candidate) => ({ candidate, text: `${candidate.textContent || ""} ${candidate.getAttribute("aria-label") || ""} ${candidate.title || ""}`.toLowerCase() }))
+    .map(({ candidate, text }) => ({
+      candidate,
+      text,
+      rect: candidate.getBoundingClientRect(),
+      distance: getRectDistance(cardRect, candidate.getBoundingClientRect()),
+    }))
+    .filter(({ candidate, text, rect }) => {
+      if (!isAddLibraryCandidate(candidate, { requireStrictText: false })) return false;
+      if (!rect || (!rect.width && !rect.height)) return false;
+
+      const distance = getRectDistance(cardRect, rect);
+      if (distance > maxDistance) return false;
+
+      if (SKIP_LIBRARY_BUTTON_PATTERNS.some((pattern) => pattern.test(text))) {
+        return false;
+      }
+
+      return true;
+    })
+    .map((entry) => ({
+      ...entry,
+      distance: getRectDistance(cardRect, entry.rect),
+    }));
+
+  if (!candidates.length) return null;
+
+  sortByProximity(cardRect, candidates);
+
+  return candidates[0]?.candidate || null;
+}
+
+async function findAddButtonForCard(card) {
+  const directButton = getAddLibraryButton(card);
+  if (directButton) return directButton;
+
+  await revealCardActionControls(card);
+
+  const revealedButton = getAddLibraryButton(card);
+  if (revealedButton) return revealedButton;
+
+  return findNearbyAddLibraryButton(card);
+}
+
 async function addVisibleFreeItemsToLibrary() {
   const listingNodes = document.querySelectorAll(
-    `${THUMBNAIL_SELECTOR}, ${PRODUCT_LINK_SELECTOR}`,
+    `${THUMBNAIL_SELECTOR}, ${PRODUCT_LINK_SELECTOR}, ${LISTING_LINK_SELECTOR}`,
   );
   const processedCards = new Set();
-  const visibleFreeCards = [];
+  const actions = [];
+  let noActionButton = 0;
 
+  let freeItems = 0;
   for (const item of listingNodes) {
     const card = getCardFromListingNode(item);
     if (!card || processedCards.has(card)) continue;
     processedCards.add(card);
     if (card.classList.contains("fab-hidden-item")) continue;
     const metrics = getCardMetrics(card);
-    if (!isFreeByText(metrics.searchText)) continue;
-    const addButton = getAddLibraryButton(card);
-    if (!addButton) continue;
-    visibleFreeCards.push({ card, button: addButton });
+    const isFree = isFreeByText(metrics.searchText) ||
+      hasFreePriceFromCard(card, metrics);
+    if (!isFree) continue;
+
+    freeItems += 1;
+    const addButton = await findAddButtonForCard(card);
+    if (!addButton) {
+      noActionButton += 1;
+      continue;
+    }
+    actions.push({ card, button: addButton });
   }
 
   let added = 0;
   let alreadyInLibrary = 0;
   let skipped = 0;
 
-  for (const { button } of visibleFreeCards) {
+  for (const { button } of actions) {
     const label = String(
       `${button.textContent || ""} ${button.getAttribute("aria-label") || ""} ${
         button.title || ""
@@ -298,8 +664,25 @@ async function addVisibleFreeItemsToLibrary() {
     }
 
     try {
-      button.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+      button.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+        inline: "center",
+      });
       button.click();
+
+      const licenseResult = await handleLicenseSelectionForLastClick();
+      if (licenseResult.hadModal) {
+        await waitForLicenseModalToClose(licenseResult.modal);
+      } else {
+        await sleep(randomDebounceDelayMs());
+      }
+
+      if (licenseResult.status === "skipped") {
+        skipped += 1;
+        continue;
+      }
+
       added += 1;
     } catch (err) {
       skipped += 1;
@@ -307,10 +690,11 @@ async function addVisibleFreeItemsToLibrary() {
   }
 
   return {
-    attempted: visibleFreeCards.length,
+    attempted: freeItems,
     added,
     alreadyInLibrary,
     skipped,
+    noActionButton,
   };
 }
 
