@@ -1344,12 +1344,25 @@ function disableExtensionManipulations(listingNodes) {
   listingNodes.forEach((item) => {
     const card = getCardFromListingNode(item);
     if (!card) return;
-    card.classList.remove("fab-hidden-item");
+    setCardHiddenState(card, false);
     removeIgnoreSellerButton(card);
   });
 
   const existingProfile = document.querySelector(`.${SELLER_PROFILE_CLASS}`);
   existingProfile?.remove();
+}
+
+function setCardHiddenState(card, shouldHide) {
+  if (shouldHide) {
+    if (!card.classList.contains("fab-hidden-item")) {
+      card.classList.add("fab-hidden-item");
+    }
+    return;
+  }
+
+  if (card.classList.contains("fab-hidden-item")) {
+    card.classList.remove("fab-hidden-item");
+  }
 }
 
 function getListingSetSignature() {
@@ -1510,11 +1523,7 @@ async function processItems() {
   }
 
   entries.forEach((entry) => {
-    if (entry.shouldHide) {
-      entry.card.classList.add("fab-hidden-item");
-    } else {
-      entry.card.classList.remove("fab-hidden-item");
-    }
+    setCardHiddenState(entry.card, entry.shouldHide);
   });
 
   ensureSellerProfile(isSellerPage, entries);
