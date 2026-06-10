@@ -63,6 +63,27 @@ const LISTING_PLUGIN_TEXT_MARKERS = [
   /\btools?\s*(?:&|&amp;|and)\s*plugins?\b/i,
   /\bplugin(s)?\b/i,
 ];
+const FREE_PRICE_PATTERNS = [
+  /\$\s*0(?:[.,]\d{1,2})?\b/i,
+  /\b0(?:[.,]\d{1,2})?\s*(?:usd|eur|gbp|aud|cad|nzd|brl|mxn|inr|jpy|krw|cny)?\b/i,
+  /\b(?:free|gratis)\b/i,
+  /\bprice\s*(?:is|:)?\s*(?:free|0(?:[.,]\d{1,2})?)\b/i,
+  /\bno\s+cost\b/i,
+];
+const ADD_LIBRARY_TEXT_PATTERNS = [
+  /add\s+to\s+library/i,
+  /save\s+to\s+library/i,
+  /\badd\s+to\s+collection\b/i,
+  /\bsave to my list\b/i,
+  /\badd/i,
+];
+const SKIP_LIBRARY_BUTTON_PATTERNS = [
+  /\balready\s+in\s+library\b/i,
+  /\bin\s+library\b/i,
+  /\bsaved\b/i,
+  /\bowned\b/i,
+  /\bremove\s+from\s+library\b/i,
+];
 
 const FILTER_PRESETS = [
   {
@@ -199,6 +220,100 @@ function getCardText(card) {
   });
 
   return text.toLowerCase();
+}
+
+function isFreeByText(value) {
+  const text = String(value || "").toLowerCase();
+  return FREE_PRICE_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function isAddLibraryCandidate(element) {
+  if (!element) return false;
+  if (element.closest(`.${IGNORE_SELLER_BUTTON_CLASS}`)) return false;
+  if (element.getAttribute("aria-disabled") === "true") return false;
+  if (element.disabled) return false;
+
+  const text = String(
+    `${element.textContent || ""} ${element.getAttribute("aria-label") || ""} ${
+      element.title || ""
+    }`,
+  )
+    .toLowerCase()
+    .trim();
+  if (!text) return false;
+  if (SKIP_LIBRARY_BUTTON_PATTERNS.some((pattern) => pattern.test(text))) {
+    return false;
+  }
+
+  return (
+    /library/.test(text) &&
+    ADD_LIBRARY_TEXT_PATTERNS.some((pattern) => pattern.test(text))
+  );
+}
+
+function getAddLibraryButton(card) {
+  const candidates = card.querySelectorAll("button, a[role='button'], a");
+  for (const candidate of candidates) {
+    if (isAddLibraryCandidate(candidate)) return candidate;
+  }
+
+  return null;
+}
+
+async function addVisibleFreeItemsToLibrary() {
+  const listingNodes = document.querySelectorAll(
+    `${THUMBNAIL_SELECTOR}, ${PRODUCT_LINK_SELECTOR}`,
+  );
+  const processedCards = new Set();
+  const visibleFreeCards = [];
+
+  for (const item of listingNodes) {
+    const card = getCardFromListingNode(item);
+    if (!card || processedCards.has(card)) continue;
+    processedCards.add(card);
+    if (card.classList.contains("fab-hidden-item")) continue;
+    const metrics = getCardMetrics(card);
+    if (!isFreeByText(metrics.searchText)) continue;
+    const addButton = getAddLibraryButton(card);
+    if (!addButton) continue;
+    visibleFreeCards.push({ card, button: addButton });
+  }
+
+  let added = 0;
+  let alreadyInLibrary = 0;
+  let skipped = 0;
+
+  for (const { button } of visibleFreeCards) {
+    const label = String(
+      `${button.textContent || ""} ${button.getAttribute("aria-label") || ""} ${
+        button.title || ""
+      }`,
+    )
+      .toLowerCase()
+      .trim();
+    if (
+      SKIP_LIBRARY_BUTTON_PATTERNS.some((pattern) => pattern.test(label)) ||
+      /in\s+library/.test(label)
+    ) {
+      alreadyInLibrary += 1;
+      continue;
+    }
+
+    try {
+      button.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+      button.click();
+      added += 1;
+    } catch (err) {
+      skipped += 1;
+    }
+  }
+
+  return {
+    attempted: visibleFreeCards.length,
+    added,
+    alreadyInLibrary,
+    skipped,
+  };
 }
 
 function parseCountToken(value) {
@@ -1042,7 +1157,7 @@ chrome.storage.local
     void processItems();
   });
 
-chrome.runtime.onMessage.addListener((request) => {
+chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
   if (request.action === "update_filters") {
     config.filterActive = request.filterActive;
     config.hiddenSellers = sanitizeList(request.hiddenSellers);
@@ -1075,6 +1190,21 @@ chrome.runtime.onMessage.addListener((request) => {
       config.extensionActive = request.extensionActive;
     }
     void processItems();
+  }
+
+  if (request.action === "add_free_library") {
+    void (async () => {
+      try {
+        const result = await addVisibleFreeItemsToLibrary();
+        sendResponse({ ok: true, ...result });
+      } catch (err) {
+        sendResponse({
+          ok: false,
+          error: err?.message || "Failed to add free items.",
+        });
+      }
+    })();
+    return true;
   }
 
 });

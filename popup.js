@@ -21,6 +21,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	const minReviewsInput = document.getElementById("min-reviews-input");
 	const presetList = document.getElementById("preset-list");
 	const extensionState = document.getElementById("extension-state");
+	const addFreeLibraryBtn = document.getElementById("add-free-library-btn");
 
 	const PRESET_DEFINITIONS = [
 		{ id: "no-ai", label: "No AI-generated content" },
@@ -163,6 +164,46 @@ document.addEventListener("DOMContentLoaded", async () => {
 		});
 	}
 
+	const addVisibleFreeItemsToLibrary = async () => {
+		if (!addFreeLibraryBtn) return;
+
+		const originalText = addFreeLibraryBtn.textContent;
+		addFreeLibraryBtn.disabled = true;
+		addFreeLibraryBtn.textContent = "Adding...";
+		try {
+			const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+			if (!tab.id) {
+				alert("No active Fab tab found.");
+				return;
+			}
+
+			const result = await chrome.tabs.sendMessage(tab.id, {
+				action: "add_free_library",
+			});
+
+			if (!result) {
+				alert("Could not communicate with the page script. Please refresh the page.");
+				return;
+			}
+
+			if (!result.ok) {
+				alert(`Unable to add items: ${result.error || "unknown error"}`);
+				return;
+			}
+
+			alert(
+				`Visible free items processed: ${result.attempted}. ` +
+					`Added: ${result.added}. Already in library: ${result.alreadyInLibrary}. ` +
+					`Skipped: ${result.skipped}`,
+			);
+		} catch (err) {
+			alert("Could not trigger adding free items. Open Fab tab and try again.");
+		} finally {
+			addFreeLibraryBtn.disabled = false;
+			addFreeLibraryBtn.textContent = originalText;
+		}
+	};
+
 	function sanitizePresetState(rawState) {
 		const sanitized = { ...PRESET_STORAGE_DEFAULTS };
 		if (!rawState || typeof rawState !== "object" || Array.isArray(rawState))
@@ -214,6 +255,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 	applyPresetBtn.addEventListener("click", applyPresetSelection);
 	disablePresetBtn.addEventListener("click", clearPresetSelection);
+	if (addFreeLibraryBtn) {
+		addFreeLibraryBtn.addEventListener("click", addVisibleFreeItemsToLibrary);
+	}
 
 	async function onSellerRemoved(seller) {
 		hiddenSellers = hiddenSellers.filter((s) => s !== seller);
