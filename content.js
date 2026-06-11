@@ -330,18 +330,18 @@ refreshActiveFilterPresetCache();
 
 function hasSavedItemMarker(card) {
   const icons = card.getElementsByClassName?.(SAVED_ITEM_ICON_CLASS);
-  if (!icons?.length) return false;
-
-  for (const icon of icons) {
-    let current = icon.parentElement;
-    while (current) {
-      if (current.classList?.contains(SAVED_ITEM_SUCCESS_CLASS)) return true;
-      if (current === card) break;
-      current = current.parentElement;
+  if (icons?.length) {
+    for (const icon of icons) {
+      let current = icon.parentElement;
+      while (current) {
+        if (current.classList?.contains(SAVED_ITEM_SUCCESS_CLASS)) return true;
+        if (current === card) break;
+        current = current.parentElement;
+      }
     }
   }
 
-  return false;
+  return /\bsaved\s+in\s+my\s+library\b/i.test(card.textContent || "");
 }
 
 function getCardContentVersion(card) {
@@ -1191,14 +1191,12 @@ function getCardFromListingNode(listingNode) {
     return cacheCardFromListingNode(listingNode, listingNode.parentElement);
   }
 
-  let node = listingNode;
+  let node = isProductOrListingLinkElement(listingNode)
+    ? listingNode.parentElement
+    : listingNode;
   let attempts = 0;
 
   while (node && node !== document.body && attempts < 16) {
-    if (isProductOrListingLinkElement(node)) {
-      return cacheCardFromListingNode(listingNode, node.parentElement || node);
-    }
-
     const nodeText = node.textContent || "";
     const hasText = nodeText.trim().length > 0;
     if (!hasText) {
@@ -2512,6 +2510,7 @@ function collectChangedListingCards(mutations, includeRemovedNodes = false) {
 let debounceTimeout = null;
 let idleCallbackId = null;
 let pendingMutationCards = new Set();
+let pendingFullMutationScan = false;
 
 function mergePendingMutationCards(targetCards) {
   if (pendingMutationCards.size === 0) return targetCards;
@@ -2523,7 +2522,8 @@ function mergePendingMutationCards(targetCards) {
   return targetCards;
 }
 
-function scheduleProcessItemsFromMutation() {
+function scheduleProcessItemsFromMutation(forceFullScan = false) {
+  if (forceFullScan) pendingFullMutationScan = true;
   if (debounceTimeout !== null || idleCallbackId !== null) return;
 
   debounceTimeout = setTimeout(() => {
@@ -2531,23 +2531,29 @@ function scheduleProcessItemsFromMutation() {
 
     if (!config.extensionActive) {
       pendingMutationCards = new Set();
+      pendingFullMutationScan = false;
       return;
     }
 
     const currentCardProcessingState = getCardProcessingState();
     if (!currentCardProcessingState.hasWork) {
       pendingMutationCards = new Set();
+      pendingFullMutationScan = false;
       return;
     }
 
-    const targetCards = pendingMutationCards;
+    const shouldForceFullScan = pendingFullMutationScan;
+    pendingFullMutationScan = false;
+    const targetCards = shouldForceFullScan ? null : pendingMutationCards;
     pendingMutationCards = new Set();
-    const listingSetSignature = targetCards.size > 0
+    const hasTargetCards = targetCards?.size > 0;
+    const listingSetSignature = hasTargetCards
       ? null
       : getListingSetSignature();
     const timeSinceLastProcess = Date.now() - lastProcessItemsCompletedAt;
     if (
-      targetCards.size === 0 &&
+      !shouldForceFullScan &&
+      !hasTargetCards &&
       listingSetSignature === lastProcessedListingSignature &&
       timeSinceLastProcess < STABLE_LISTING_REPROCESS_INTERVAL_MS
     ) {
@@ -2558,9 +2564,16 @@ function scheduleProcessItemsFromMutation() {
       idleCallbackId = window.requestIdleCallback(
         () => {
           idleCallbackId = null;
+          const runFullScan = shouldForceFullScan || pendingFullMutationScan;
+          if (runFullScan) {
+            pendingFullMutationScan = false;
+            pendingMutationCards = new Set();
+          }
           processItems(
-            listingSetSignature,
-            mergePendingMutationCards(targetCards),
+            runFullScan ? null : listingSetSignature,
+            runFullScan
+              ? null
+              : mergePendingMutationCards(targetCards),
             currentCardProcessingState,
           );
         },
@@ -2569,8 +2582,20 @@ function scheduleProcessItemsFromMutation() {
       return;
     }
 
-    processItems(listingSetSignature, targetCards, currentCardProcessingState);
+    processItems(
+      shouldForceFullScan ? null : listingSetSignature,
+      targetCards,
+      currentCardProcessingState,
+    );
   }, MUTATION_PROCESS_DEBOUNCE_MS);
+}
+
+function hasAddedMutationNodes(mutations) {
+  for (const mutation of mutations) {
+    if (mutation.addedNodes.length > 0) return true;
+  }
+
+  return false;
 }
 
 const observer = new MutationObserver((mutations) => {
@@ -2592,7 +2617,12 @@ const observer = new MutationObserver((mutations) => {
     mutations,
     shouldTrackRemovedCards,
   );
-  if (!changedCards.size) return;
+  if (!changedCards.size) {
+    if (hasAddedMutationNodes(mutations)) {
+      scheduleProcessItemsFromMutation(true);
+    }
+    return;
+  }
 
   let addedPendingCard = false;
   for (const card of changedCards) {
