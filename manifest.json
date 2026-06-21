@@ -6,7 +6,7 @@
   "version": "1.0.0",
   "description": "Improves Fab.com browsing with saved-item, seller, keyword, review-count, and sorting filters",
   "permissions": ["storage", "downloads"],
-  "host_permissions": ["*://*.fab.com/*", "*://www.fab.com/*"],
+  "host_permissions": ["*://*.fab.com/*"],
   "icons": {
     "16": "logo16.png",
     "48": "logo48.png",
@@ -26,7 +26,7 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.fab.com/*", "*://www.fab.com/*"],
+      "matches": ["*://*.fab.com/*"],
       "css": ["styles.css"],
       "js": ["content.js"]
     }

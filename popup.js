@@ -1,7 +1,7 @@
 document.addEventListener("DOMContentLoaded", async () => {
 	const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-	if (!tab.url || !tab.url.includes("fab.com")) {
+	if (!tab || !tab.url || !tab.url.includes("fab.com")) {
 		document.getElementById("app-content").style.display = "none";
 		document.getElementById("wrong-site-message").style.display = "block";
 		return;
@@ -59,10 +59,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 		keywordList,
 	];
 
-	await chrome.storage.local.remove([
-		"starSortModeSelector",
-		"starSortModeMatch",
-	]);
 
 	let data = await chrome.storage.local.get([
 		"filterActive",

@@ -88,25 +88,23 @@ async function setExtensionState(isActive) {
 }
 
 // On first load, check storage and update the icon
-getExtensionState().then(updateBadge);
+(async () => {
+  try {
+    const currentState = await getExtensionState();
+    await updateBadge(currentState);
+  } catch (err) {
+    console.error("Failed to initialize badge status:", err);
+  }
+})();
 
-chrome.storage.onChanged.addListener((changes, areaName) => {
+chrome.storage.onChanged.addListener(async (changes, areaName) => {
   if (areaName !== "local") return;
   if (!changes.extensionActive) return;
 
-  updateBadge(Boolean(changes.extensionActive.newValue));
-});
-
-// Listener for browser icon clicks
-chrome.action.onClicked.addListener(async () => {
-  const currentState = await getExtensionState();
-  await setExtensionState(!currentState);
-});
-
-// Listener for keyboard shortcuts
-chrome.commands.onCommand.addListener(async (command) => {
-  if (command === "_execute_action") {
-    const currentState = await getExtensionState();
-    await setExtensionState(!currentState);
+  try {
+    await updateBadge(Boolean(changes.extensionActive.newValue));
+  } catch (err) {
+    console.error("Failed to update badge status on storage change:", err);
   }
 });
+

@@ -21,6 +21,7 @@
                 justify-content: space-between;
                 margin-bottom: 12px;
                 font-size: 14px;
+                cursor: pointer;
             }
 
             input[type="text"],
@@ -182,27 +183,27 @@
         </div>
 
         <div id="app-content">
-            <div class="toggle-row">
+            <label class="toggle-row" for="toggle-saved">
                 <span>Hide "Saved" Items (Global)</span>
                 <input type="checkbox" id="toggle-saved" />
-            </div>
-            <div class="toggle-row">
+            </label>
+            <label class="toggle-row" for="toggle-saved-seller-page">
                 <span>Hide "Saved" on Seller Pages</span>
                 <input type="checkbox" id="toggle-saved-seller-page" />
-            </div>
-            <div class="toggle-row">
+            </label>
+            <label class="toggle-row" for="toggle-hide-seller-buttons">
                 <span>Show Hide Seller Buttons</span>
                 <input type="checkbox" id="toggle-hide-seller-buttons" />
-            </div>
-            <div class="toggle-row">
+            </label>
+            <label class="toggle-row" for="toggle-library-seller">
                 <span>Hide Sellers inside "My Library"</span>
                 <input type="checkbox" id="toggle-library-seller" />
-            </div>
-            <div class="toggle-row">
+            </label>
+            <label class="toggle-row" for="toggle-star-review-sort">
                 <span>Sort by Review Count when sorting per stars</span>
                 <input type="checkbox" id="toggle-star-review-sort" />
-            </div>
-            <div class="toggle-row">
+            </label>
+            <label class="toggle-row" for="min-reviews-input">
                 <span>Minimum Reviews Filter</span>
                 <input
                     type="number"
@@ -210,7 +211,7 @@
                     min="0"
                     value="0"
                 />
-            </div>
+            </label>
             <h3 style="margin-top: 16px">Filter Presets</h3>
             <div id="extension-state" class="extension-state inactive">Extension: Inactive</div>
             <div id="preset-list" class="preset-list"></div>
