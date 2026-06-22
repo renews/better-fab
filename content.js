@@ -1315,11 +1315,13 @@ function getCardFromListingNode(listingNode) {
 		if (parent && parent !== document.body) {
 			const siblings = parent.children;
 			if (siblings.length >= 2) {
-				let linkMatchCount = 0;
+				const uniqueHrefs = new Set();
 				for (const sibling of siblings) {
-					if (getFirstProductOrListingHref(sibling) !== "") {
-						linkMatchCount += 1;
-						if (linkMatchCount >= 2) {
+					const href = getFirstProductOrListingHref(sibling);
+					if (href) {
+						// Strip query parameters to ensure we compare base product URLs
+						uniqueHrefs.add(href.split('?')[0].split('#')[0]);
+						if (uniqueHrefs.size >= 2) {
 							return cacheCardFromListingNode(listingNode, node);
 						}
 					}
