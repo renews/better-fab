@@ -134,6 +134,7 @@ const LIBRARY_REVEAL_EVENT_TYPES = [
 const FREE_PRICE_PATTERNS = [
 	/\$\s*0(?:[.,]\d{1,2})?\b/i,
 	/\b0(?:[.,]\d{1,2})?\s*(?:usd|eur|gbp|aud|cad|nzd|brl|mxn|inr|jpy|krw|cny)?\b/i,
+	/(?:^|\s|[A-Z$£€¥₹])0(?:[.,]\d{1,2})?\b/i,
 	/\b(?:free|gratis)\b/i,
 	/\bprice\s*(?:is|:)?\s*(?:free|0(?:[.,]\d{1,2})?)\b/i,
 	/\bno\s+cost\b/i,
@@ -794,7 +795,14 @@ async function handleLicenseSelectionForLastClick() {
 	const modal = await waitForLicenseModal();
 	if (!modal) return { status: "none", hadModal: false, modal: null };
 
-	const preferredInput = getPreferredLicenseInput(modal);
+	let preferredInput = getPreferredLicenseInput(modal);
+	let renderAttempts = 0;
+	while (!preferredInput && renderAttempts < 15) {
+		await sleep(100);
+		preferredInput = getPreferredLicenseInput(modal);
+		renderAttempts++;
+	}
+
 	if (!preferredInput) {
 		closeLicenseModal(modal);
 		return { status: "skipped", hadModal: true, modal };
@@ -809,6 +817,13 @@ async function handleLicenseSelectionForLastClick() {
 	}
 
 	let addButton = getLicenseModalAddButton(modal);
+	let btnAttempts = 0;
+	while (!addButton && btnAttempts < 15) {
+		await sleep(100);
+		addButton = getLicenseModalAddButton(modal);
+		btnAttempts++;
+	}
+
 	if (!addButton) {
 		closeLicenseModal(modal);
 		return { status: "skipped", hadModal: true, modal };
