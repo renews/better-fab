@@ -684,54 +684,62 @@ function getPreferredLicenseInput(modal) {
 		const optionText = String(field.textContent || "").toLowerCase();
 		if (!labelText && !optionText) continue;
 
-		const input =
-			field.querySelector('input[type="radio"], input[type="checkbox"]') ||
-			field.querySelector("label");
+		const clickableTarget =
+			field.querySelector("label") ||
+			field; // Click the label or the field wrapper itself, clicking hidden inputs fails in React
 
-		if (!input) continue;
+		if (!clickableTarget) continue;
 
 		const isFree = isPriceFree(optionText) || isPriceFree(labelText);
-		allCandidates.push({ input, isFree, text: optionText + " " + labelText });
+		allCandidates.push({ input: clickableTarget, isFree, text: optionText + " " + labelText });
 
 		const isPersonal = /\bpersonal\b/.test(labelText);
 		const isProfessional = /\bprofessional\b/.test(labelText);
 
 		if (isProfessional && !hasProfessional) {
 			hasProfessional = true;
-			professionalInput = input;
+			professionalInput = clickableTarget;
 			professionalIsFree = isFree;
 		} else if (isPersonal && !hasPersonal) {
 			hasPersonal = true;
-			personalInput = input;
+			personalInput = clickableTarget;
 			personalIsFree = isFree;
 		}
 	}
 
-	if (hasProfessional && professionalIsFree) return professionalInput;
 	if (hasPersonal && personalIsFree) return personalInput;
+	if (hasProfessional && professionalIsFree) return professionalInput;
 
 	const freeCandidate = allCandidates.find((c) => c.isFree);
 	if (freeCandidate) return freeCandidate.input;
 
-	if (allCandidates.length === 1) {
-		return allCandidates[0].input;
+	if (allCandidates.length > 0) {
+		return allCandidates[0].input; // Always pick the first option as a fallback instead of failing
 	}
 
 	const checkedInput = modal.querySelector(
 		'input[type="radio"]:checked, input[type="checkbox"]:checked',
 	);
-	if (checkedInput) {
-		return checkedInput;
-	}
-
-	const allInputs = modal.querySelectorAll(
-		'input[type="radio"], input[type="checkbox"]',
-	);
-	if (allInputs.length === 1) {
-		return allInputs[0];
-	}
+	if (checkedInput) return checkedInput;
 
 	return null;
+}
+
+function closeLicenseModal(modal) {
+	const closeButton = modal.querySelector(
+		'button[aria-label="Close"], .fabkit-Modal-closeButton, .close-button, button svg'
+	)?.closest('button');
+	if (closeButton) {
+        closeButton.click();
+    } else {
+        const buttons = modal.querySelectorAll('button');
+        for (const btn of buttons) {
+            if (!btn.textContent.trim()) {
+                btn.click();
+                break;
+            }
+        }
+    }
 }
 
 function getLicenseModalAddButton(modal) {
@@ -971,6 +979,9 @@ async function findAddButtonForCard(card) {
 	let button = getAddLibraryButton(card, { skipVisibilityCheck: false });
 	if (button) return button;
 
+	button = getAddLibraryButton(card, { skipVisibilityCheck: true });
+	if (button) return button;
+
 	// 4. Fallback to searching nearby (last resort)
 	return findNearbyAddLibraryButton(card);
 }
@@ -1027,6 +1038,8 @@ async function addVisibleFreeItemsToLibrary() {
 		const button = await findAddButtonForCard(card);
 		if (!button) {
 			noActionButton += 1;
+			card.style.border = "5px solid red";
+			card.title = "Failed: Add button not found in DOM or nearby";
 			continue;
 		}
 
@@ -1061,12 +1074,17 @@ async function addVisibleFreeItemsToLibrary() {
 
 			if (licenseResult.status === "skipped") {
 				skipped += 1;
+				card.style.border = "5px solid orange";
+				card.title = "Failed: Could not automatically accept the license modal";
 				continue;
 			}
 
 			added += 1;
+			card.style.border = "5px solid green";
 		} catch (err) {
 			skipped += 1;
+			card.style.border = "5px solid purple";
+			card.title = "Failed: JavaScript Error " + err.message;
 		}
 	}
 
@@ -1282,11 +1300,11 @@ function getCardFromListingNode(listingNode) {
 		if (parent && parent !== document.body) {
 			const siblings = parent.children;
 			if (siblings.length >= 2) {
-				let thumbnailMatchCount = 0;
+				let linkMatchCount = 0;
 				for (const sibling of siblings) {
-					if (sibling.getElementsByClassName?.(THUMBNAIL_CLASS).length > 0) {
-						thumbnailMatchCount += 1;
-						if (thumbnailMatchCount >= 2) {
+					if (getFirstProductOrListingHref(sibling) !== "") {
+						linkMatchCount += 1;
+						if (linkMatchCount >= 2) {
 							return cacheCardFromListingNode(listingNode, node);
 						}
 					}
@@ -2736,12 +2754,7 @@ const observer = new MutationObserver((mutations) => {
 		mutations,
 		shouldTrackRemovedCards,
 	);
-	if (!changedCards.size) {
-		if (hasAddedMutationNodes(mutations)) {
-			scheduleProcessItemsFromMutation(true);
-		}
-		return;
-	}
+	if (!changedCards.size) return;
 
 	let addedPendingCard = false;
 	for (const card of changedCards) {
