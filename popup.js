@@ -192,6 +192,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 			control.disabled = isRunning;
 		}
 
+		if (!isRunning) {
+			setExtensionButtons(extensionActive);
+		}
+
 		if (!presetList) return;
 		const presetInputs = presetList.querySelectorAll("input");
 		presetInputs.forEach((input) => {

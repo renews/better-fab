@@ -1155,6 +1155,16 @@ function isProductHref(href) {
 }
 
 function isProductOrListingHref(href) {
+	if (!href) return false;
+	if (
+		href.includes("/tags/") ||
+		href.includes("/category/") ||
+		href.includes("/channels/") ||
+		href.includes("/collections/") ||
+		href.includes("/sellers/")
+	) {
+		return false;
+	}
 	return (
 		href.startsWith("/products/") ||
 		href.startsWith("/listings/") ||
@@ -1263,65 +1273,37 @@ function isListingNodeElement(node) {
 	);
 }
 
-function countProductLinks(node) {
-	let count = 0;
-	const links = node.getElementsByTagName?.("a");
-	if (!links) return 0;
-
-	for (const link of links) {
-		if (!isProductHref(link.getAttribute("href") || "")) continue;
-		count += 1;
-		if (count > 1) return count;
-	}
-
-	return count;
-}
-
 function getCardFromListingNode(listingNode) {
 	if (!listingNode) return null;
+	if (listingNode.closest?.(LICENSE_MODAL_SELECTOR)) return null;
 
 	const cachedCard = getCachedCardFromListingNode(listingNode);
 	if (cachedCard) return cachedCard;
 
-	if (listingNode.classList?.contains(THUMBNAIL_CLASS)) {
-		let node = listingNode.parentElement;
-
-		while (node && node !== document.body) {
-			const thumbnailCount =
-				node.getElementsByClassName?.(THUMBNAIL_CLASS).length || 0;
-			if (thumbnailCount === 1 && parseFabRatingCount(node.textContent || "")) {
-				return cacheCardFromListingNode(listingNode, node);
-			}
-			node = node.parentElement;
-		}
-		return cacheCardFromListingNode(listingNode, listingNode.parentElement);
+	const semanticAncestor = listingNode.closest?.("li, article, section");
+	if (semanticAncestor && semanticAncestor !== document.body) {
+		return cacheCardFromListingNode(listingNode, semanticAncestor);
 	}
 
-	let node = isProductOrListingLinkElement(listingNode)
-		? listingNode.parentElement
-		: listingNode;
+	let node = listingNode;
 	let attempts = 0;
 
 	while (node && node !== document.body && attempts < 16) {
-		const nodeText = node.textContent || "";
-		const hasText = nodeText.trim().length > 0;
-		if (!hasText) {
-			node = node.parentElement;
-			attempts += 1;
-			continue;
+		const parent = node.parentElement;
+		if (parent && parent !== document.body) {
+			const siblings = parent.children;
+			if (siblings.length >= 2) {
+				let thumbnailMatchCount = 0;
+				for (const sibling of siblings) {
+					if (sibling.getElementsByClassName?.(THUMBNAIL_CLASS).length > 0) {
+						thumbnailMatchCount += 1;
+						if (thumbnailMatchCount >= 2) {
+							return cacheCardFromListingNode(listingNode, node);
+						}
+					}
+				}
+			}
 		}
-
-		const childThumbnails =
-			node.getElementsByClassName?.(THUMBNAIL_CLASS).length || 0;
-		if (childThumbnails === 1 && parseFabRatingCount(nodeText)) {
-			return cacheCardFromListingNode(listingNode, node);
-		}
-
-		const isCardContainer = isCardContainerElement(node);
-		if (isCardContainer && countProductLinks(node) === 1) {
-			return cacheCardFromListingNode(listingNode, node);
-		}
-
 		node = node.parentElement;
 		attempts += 1;
 	}
