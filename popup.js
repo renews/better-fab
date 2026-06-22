@@ -110,11 +110,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 		const tabs = await chrome.tabs.query({ url: "*://*.fab.com/*" });
 		for (const t of tabs) {
 			chrome.tabs
-					.sendMessage(t.id, {
-						action: "update_filters",
-						filterActive,
-						hiddenSellers,
-						applySellerFilterInLibrary,
+				.sendMessage(t.id, {
+					action: "update_filters",
+					filterActive,
+					hiddenSellers,
+					applySellerFilterInLibrary,
 					applySavedFilterOnSellerPage,
 					sortStarsByReviewCount,
 					showHideSellerButtons,
@@ -123,7 +123,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 					activeFilterPresets,
 					extensionActive,
 				})
-				.catch(() => {});
+				.catch(() => { });
 		}
 	}
 
@@ -146,8 +146,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 		applyPresetBtn.disabled = isActive;
 		disablePresetBtn.disabled = !isActive;
 		extensionState.textContent = isActive
-			? "Extension: Active"
-			: "Extension: Inactive";
+			? "Active"
+			: "Inactive";
 		extensionState.classList.toggle("active", isActive);
 		extensionState.classList.toggle("inactive", !isActive);
 	}
@@ -236,8 +236,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 			alert(
 				`Visible free items processed: ${result.attempted}. ` +
-					`Added: ${result.added}. Already in library: ${result.alreadyInLibrary}. ` +
-					`Failed to click: ${result.skipped || 0}. No action button: ${result.noActionButton || 0}`,
+				`Added: ${result.added}. Already in library: ${result.alreadyInLibrary}. ` +
+				`Failed to click: ${result.skipped || 0}. No action button: ${result.noActionButton || 0}`,
 			);
 		} catch (err) {
 			alert("Could not trigger adding free items. Open Fab tab and try again.");
@@ -278,9 +278,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 				await broadcastUpdate();
 			});
 
-		row.append(label, checkbox);
-		presetList.appendChild(row);
-	});
+			row.append(label, checkbox);
+			presetList.appendChild(row);
+		});
 	}
 
 	async function applyPresetSelection() {
