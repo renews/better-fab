@@ -1185,16 +1185,33 @@ function isProductHref(href) {
 
 function isProductOrListingHref(href) {
 	if (!href) return false;
+	const lowerHref = href.toLowerCase();
 	if (
-		href.includes("/tags/") ||
-		href.includes("/category/") ||
-		href.includes("/channels/") ||
-		href.includes("/collections/") ||
-		href.includes("/sellers/")
+		lowerHref.includes("/tags/") ||
+		lowerHref.includes("/category/") ||
+		lowerHref.includes("/channels/") ||
+		lowerHref.includes("/collections/") ||
+		lowerHref.includes("/sellers/") ||
+		lowerHref.includes("/about/") ||
+		lowerHref.includes("/search") ||
+		lowerHref.includes("/login") ||
+		lowerHref.includes("/cart") ||
+		lowerHref.includes("/library")
 	) {
 		return false;
 	}
-	return /\/([a-z]{2}(?:-[a-zA-Z]{2,4})?\/)?(products|listings)\//i.test(href);
+	
+	if (/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i.test(href)) return true;
+	if (/\/([a-z]{2}(?:-[a-zA-Z]{2,4})?\/)?(products|listings|models|assets|items|plugins|environments|materials|characters|vehicles|weapons|props)\//i.test(href)) return true;
+	if (/\/\d+-[a-z0-9-]+/i.test(href)) return true;
+
+	const path = href.split('?')[0].split('#')[0];
+	const segments = path.split('/').filter(Boolean);
+	if (segments.length >= 2 && !href.startsWith("javascript:") && !href.startsWith("mailto:")) {
+		return true;
+	}
+
+	return false;
 }
 
 function isProductOrListingLinkElement(node) {
@@ -1302,10 +1319,6 @@ function getCardFromListingNode(listingNode) {
 	const cachedCard = getCachedCardFromListingNode(listingNode);
 	if (cachedCard) return cachedCard;
 
-	const semanticAncestor = listingNode.closest?.("li, article, section");
-	if (semanticAncestor && semanticAncestor !== document.body) {
-		return cacheCardFromListingNode(listingNode, semanticAncestor);
-	}
 
 	let node = listingNode;
 	let attempts = 0;
@@ -1347,7 +1360,7 @@ function getCardMetrics(card, knownHref = null) {
 	const cached = CARD_METRICS_CACHE.get(card);
 	if (cached?.signature === signature) return cached.metrics;
 
-	const rawText = card.textContent || "";
+	const rawText = card.innerText || card.textContent || "";
 	const cardText = getCardText(card, rawText);
 	const fabRatingCount = parseFabRatingCount(cardText);
 
