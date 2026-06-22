@@ -47,6 +47,7 @@ let configuredQueryMatchCache = {
 };
 let initialStartupProcessAttempts = 0;
 
+
 const STAR_SORT_INDICATOR = /rating|reviews?|stars?/i;
 const STAR_SORT_QUERY_KEYS = [
 	"sort",
@@ -59,11 +60,9 @@ const STAR_SORT_QUERY_KEY_SET = new Set(STAR_SORT_QUERY_KEYS);
 const STAR_SORT_QUERY_FRAGMENT = "ratings.averagerating";
 const THUMBNAIL_CLASS = "fabkit-Thumbnail-root";
 const THUMBNAIL_SELECTOR = `.${THUMBNAIL_CLASS}`;
-const PRODUCT_LINK_SELECTOR =
-	'a[href^="/products/"], a[href*="://www.fab.com/products/"], a[href*="://fab.com/products/"]';
-const LISTING_LINK_SELECTOR =
-	'a[href^="/listings/"], a[href*="://www.fab.com/listings/"], a[href*="://fab.com/listings/"]';
-const PRODUCT_OR_LISTING_LINK_SELECTOR = `${PRODUCT_LINK_SELECTOR}, ${LISTING_LINK_SELECTOR}`;
+const PRODUCT_LINK_SELECTOR = 'a[href*="/products/"]';
+const LISTING_LINK_SELECTOR = 'a[href*="/listings/"]';
+const PRODUCT_OR_LISTING_LINK_SELECTOR = 'a[href*="/products/"], a[href*="/listings/"]';
 const IGNORE_SELLER_CARD_CLASS = "better-fab-ignore-seller-card";
 const IGNORE_SELLER_BUTTON_CLASS = "better-fab-ignore-seller-btn";
 const SELLER_PROFILE_CLASS = "better-fab-seller-profile";
@@ -972,9 +971,6 @@ async function findAddButtonForCard(card) {
 	let button = getAddLibraryButton(card, { skipVisibilityCheck: false });
 	if (button) return button;
 
-	button = getAddLibraryButton(card, { skipVisibilityCheck: true });
-	if (button) return button;
-
 	// 4. Fallback to searching nearby (last resort)
 	return findNearbyAddLibraryButton(card);
 }
@@ -1165,14 +1161,7 @@ function isProductOrListingHref(href) {
 	) {
 		return false;
 	}
-	return (
-		href.startsWith("/products/") ||
-		href.startsWith("/listings/") ||
-		href.includes("://www.fab.com/products/") ||
-		href.includes("://fab.com/products/") ||
-		href.includes("://www.fab.com/listings/") ||
-		href.includes("://fab.com/listings/")
-	);
+	return /\/([a-z]{2}(?:-[a-zA-Z]{2,4})?\/)?(products|listings)\//i.test(href);
 }
 
 function isProductOrListingLinkElement(node) {
@@ -2164,6 +2153,7 @@ function processItems(
 
 		if (!card) continue;
 		if (shouldProcessTargetCards && !card.isConnected) continue;
+		if (getFirstProductOrListingHref(card) === "") continue;
 		if (processedCards) {
 			if (processedCards.has(card)) continue;
 			processedCards.add(card);
@@ -2274,8 +2264,11 @@ function processItems(
 		applyStarReviewSort(entries);
 	}
 
+
 	markListingSetProcessed(currentListingSetSignature);
 }
+
+
 
 async function initializeExtension() {
 	try {
