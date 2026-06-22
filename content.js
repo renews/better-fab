@@ -687,7 +687,7 @@ function getPreferredLicenseInput(modal) {
 
 		const clickableTarget =
 			field.querySelector("label") ||
-			field; // Click the label or the field wrapper itself, clicking hidden inputs fails in React
+			field;
 
 		if (!clickableTarget) continue;
 
@@ -715,7 +715,7 @@ function getPreferredLicenseInput(modal) {
 	if (freeCandidate) return freeCandidate.input;
 
 	if (allCandidates.length > 0) {
-		return allCandidates[0].input; // Always pick the first option as a fallback instead of failing
+		return allCandidates[0].input;
 	}
 
 	const checkedInput = modal.querySelector(
@@ -1319,7 +1319,6 @@ function getCardFromListingNode(listingNode) {
 				for (const sibling of siblings) {
 					const href = getFirstProductOrListingHref(sibling);
 					if (href) {
-						// Strip query parameters to ensure we compare base product URLs
 						uniqueHrefs.add(href.split('?')[0].split('#')[0]);
 						if (uniqueHrefs.size >= 2) {
 							return cacheCardFromListingNode(listingNode, node);
