@@ -1053,8 +1053,6 @@ async function addVisibleFreeItemsToLibrary() {
 		const button = await findAddButtonForCard(card);
 		if (!button) {
 			noActionButton += 1;
-			card.style.border = "5px solid red";
-			card.title = "Failed: Add button not found in DOM or nearby";
 			continue;
 		}
 
@@ -1089,17 +1087,12 @@ async function addVisibleFreeItemsToLibrary() {
 
 			if (licenseResult.status === "skipped") {
 				skipped += 1;
-				card.style.border = "5px solid orange";
-				card.title = "Failed: Could not automatically accept the license modal";
 				continue;
 			}
 
 			added += 1;
-			card.style.border = "5px solid green";
 		} catch (err) {
 			skipped += 1;
-			card.style.border = "5px solid purple";
-			card.title = "Failed: JavaScript Error " + err.message;
 		}
 	}
 
