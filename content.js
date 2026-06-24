@@ -471,20 +471,33 @@ async function processProductPage(pathname) {
 	const heading = document.querySelector("h1");
 	if (!heading) return;
 
+	let productWidgetContainer = document.getElementById("better-fab-product-widget");
+	if (!productWidgetContainer) {
+		productWidgetContainer = document.createElement("div");
+		productWidgetContainer.id = "better-fab-product-widget";
+		productWidgetContainer.style.fontSize = "14px";
+		productWidgetContainer.style.fontWeight = "normal";
+		productWidgetContainer.style.lineHeight = "normal";
+		productWidgetContainer.style.marginTop = "8px";
+		productWidgetContainer.style.marginBottom = "8px";
+		
+		const targetBlock = heading.closest(".fabkit-Stack-root") || heading.parentElement;
+		if (targetBlock && targetBlock.parentElement) {
+			targetBlock.parentElement.insertBefore(productWidgetContainer, targetBlock.nextSibling);
+		}
+	}
+
 	if (!document.querySelector(".better-fab-product-ignore-btn")) {
 		const btnContainer = document.createElement("div");
 		btnContainer.className = "better-fab-product-ignore-btn";
-		btnContainer.style.marginTop = "8px";
-		btnContainer.style.marginBottom = "8px";
+		btnContainer.style.marginBottom = "16px";
 		
 		const btn = createSellerProfileButton();
 		btn.dataset.seller = sellerName;
 		updateSellerPageIgnoreButton(btn, sellerName);
 		btnContainer.appendChild(btn);
 		
-		if (heading.parentElement) {
-			heading.parentElement.insertBefore(btnContainer, heading.nextSibling);
-		}
+		productWidgetContainer.appendChild(btnContainer);
 	}
 
 	if (lastProcessedProductPath === pathname) return;
@@ -506,7 +519,7 @@ async function processProductPage(pathname) {
 			entries.push({ card, metrics: getCardMetrics(card) });
 		}
 
-		const validEntries = getValidSellerEntries(entries, sellerName);
+		const validEntries = getValidSellerEntries(entries, sellerName, doc);
 		const ratingSummary = getSellerRatingSummary(validEntries);
 		const profile = createSellerProfile();
 		
@@ -516,8 +529,12 @@ async function processProductPage(pathname) {
 
 		updateSellerProfileContent(profile, ratingSummary);
 
-		if (heading.parentElement) {
-			heading.parentElement.insertBefore(profile, heading.nextSibling);
+		const existingProfile = document.getElementById("better-fab-product-profile");
+		if (existingProfile) existingProfile.remove();
+		
+		profile.id = "better-fab-product-profile";
+		if (productWidgetContainer) {
+			productWidgetContainer.appendChild(profile);
 		}
 	} catch (e) {
 		console.error("Failed to fetch seller metrics for product page", e);
@@ -1066,7 +1083,7 @@ async function findAddButtonForCard(card) {
 	button = getAddLibraryButton(card, { skipVisibilityCheck: true });
 	if (button) return button;
 
-	// 4. Fallback to searching nearby (last resort)
+
 	return findNearbyAddLibraryButton(card);
 }
 
@@ -1111,14 +1128,14 @@ async function addVisibleFreeItemsToLibrary() {
 				behavior: "smooth"
 			});
 			
-			await sleep(2000); // Wait for pagination to trigger
+			await sleep(2000);
 			
 			if (batchResult.attempted === 0) {
 				noNewItemsCount += 1;
 				if (noNewItemsCount >= MAX_NO_NEW_ITEMS) {
 					break;
 				}
-				await sleep(2000); // Extra wait to be sure it's not just a slow network
+				await sleep(2000);
 			} else {
 				noNewItemsCount = 0;
 			}
@@ -1624,14 +1641,28 @@ function formatCount(value) {
 	return Math.round(value).toLocaleString();
 }
 
-function getValidSellerEntries(entries, targetSellerName) {
+function getValidSellerEntries(entries, targetSellerName, rootNode = document) {
 	if (!targetSellerName) return entries;
 	const lowerTarget = targetSellerName.trim().toLowerCase();
-	return entries.filter((entry) => {
+	
+	const h1 = rootNode.querySelector("h1");
+
+	const potentialEntries = entries.filter((entry) => {
 		const href = getFirstProductOrListingHref(entry.card);
 		if (!href) return false;
-		return entry.metrics?.sellerName === lowerTarget;
+		
+		if (h1 && !(h1.compareDocumentPosition(entry.card) & Node.DOCUMENT_POSITION_FOLLOWING)) {
+			return false;
+		}
+
+		const sellerName = entry.metrics?.sellerName || "";
+		return sellerName === "" || sellerName === lowerTarget;
 	});
+
+	if (potentialEntries.length === 0) return potentialEntries;
+
+	const primaryGrid = potentialEntries[0].card.parentElement;
+	return potentialEntries.filter(entry => entry.card.parentElement === primaryGrid);
 }
 
 function getSellerRatingSummary(entries) {
@@ -1795,19 +1826,32 @@ function ensureSellerProfile(isSellerPage, entries, allowProfileQuery = true) {
 
 	updateSellerProfileContent(profile, ratingSummary);
 
+	const targetDiv = document.querySelector(".fabkit-Stack-root.DFhlZJF3");
+	if (targetDiv && targetDiv.parentElement) {
+		if (profile.previousElementSibling !== targetDiv) {
+			targetDiv.parentElement.insertBefore(profile, targetDiv.nextSibling);
+		}
+		return;
+	}
+
 	const sellerItemsContainer = getSellerItemsContainer(validEntries);
 	if (sellerItemsContainer?.parentElement) {
-		sellerItemsContainer.parentElement.insertBefore(
-			profile,
-			sellerItemsContainer,
-		);
+		if (profile.nextElementSibling !== sellerItemsContainer) {
+			sellerItemsContainer.parentElement.insertBefore(
+				profile,
+				sellerItemsContainer,
+			);
+		}
 		return;
 	}
 
 	if (!profile.isConnected) {
 		const heading = document.querySelector("h1");
-		if (heading?.parentElement) {
-			heading.parentElement.insertBefore(profile, heading.nextSibling);
+		if (heading) {
+			const targetBlock = heading.closest(".fabkit-Stack-root") || heading.parentElement;
+			if (targetBlock && targetBlock.parentElement) {
+				targetBlock.parentElement.insertBefore(profile, targetBlock.nextSibling);
+			}
 		}
 	}
 }
