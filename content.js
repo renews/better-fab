@@ -714,15 +714,6 @@ function getPreferredLicenseInput(modal) {
 	const freeCandidate = allCandidates.find((c) => c.isFree);
 	if (freeCandidate) return freeCandidate.input;
 
-	if (allCandidates.length > 0) {
-		return allCandidates[0].input;
-	}
-
-	const checkedInput = modal.querySelector(
-		'input[type="radio"]:checked, input[type="checkbox"]:checked',
-	);
-	if (checkedInput) return checkedInput;
-
 	return null;
 }
 
@@ -1010,15 +1001,72 @@ async function ensureNoActiveModal(timeoutMs = 1500) {
 	}
 }
 
+let isMassAdding = false;
+
 async function addVisibleFreeItemsToLibrary() {
+	if (isMassAdding) return { error: "Already running" };
+	isMassAdding = true;
+
+	const massProcessedCards = new Set();
+	const cumulative = {
+		attempted: 0,
+		added: 0,
+		alreadyInLibrary: 0,
+		skipped: 0,
+		noActionButton: 0,
+	};
+	let noNewItemsCount = 0;
+	const MAX_NO_NEW_ITEMS = 3;
+
+	try {
+		while (isMassAdding) {
+			const batchResult = await processVisibleBatch(massProcessedCards);
+			
+			cumulative.attempted += batchResult.attempted;
+			cumulative.added += batchResult.added;
+			cumulative.alreadyInLibrary += batchResult.alreadyInLibrary;
+			cumulative.skipped += batchResult.skipped;
+			cumulative.noActionButton += batchResult.noActionButton;
+			
+			window.scrollTo({
+				top: document.body.scrollHeight,
+				behavior: "smooth"
+			});
+			
+			await sleep(2000); // Wait for pagination to trigger
+			
+			if (batchResult.attempted === 0) {
+				noNewItemsCount += 1;
+				if (noNewItemsCount >= MAX_NO_NEW_ITEMS) {
+					break;
+				}
+				await sleep(2000); // Extra wait to be sure it's not just a slow network
+			} else {
+				noNewItemsCount = 0;
+			}
+		}
+	} finally {
+		isMassAdding = false;
+	}
+
+	alert(
+		`The extension Better Fab says\n\n` +
+		`Visible free items processed: ${cumulative.attempted}. Added: ${cumulative.added}. ` +
+		`Already in library: ${cumulative.alreadyInLibrary}. Failed to click: ${cumulative.skipped}. ` +
+		`No action button: ${cumulative.noActionButton}`
+	);
+
+	return cumulative;
+}
+
+async function processVisibleBatch(massProcessedCards) {
 	const listingNodes = getListingScanNodes();
-	const processedCards = new Set();
 	const cards = [];
 
 	for (const item of listingNodes) {
 		const card = getCardFromListingNode(item);
-		if (!card || processedCards.has(card)) continue;
-		processedCards.add(card);
+		if (!card || massProcessedCards.has(card)) continue;
+		massProcessedCards.add(card);
 		if (card.classList.contains("fab-hidden-item")) continue;
 
 		const rect = card.getBoundingClientRect();

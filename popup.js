@@ -234,11 +234,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 				return;
 			}
 
-			alert(
-				`Visible free items processed: ${result.attempted}. ` +
-				`Added: ${result.added}. Already in library: ${result.alreadyInLibrary}. ` +
-				`Failed to click: ${result.skipped || 0}. No action button: ${result.noActionButton || 0}`,
-			);
+			// Alert has been moved to content.js to support long-running tasks
+			// that might outlive the popup window.
 		} catch (err) {
 			alert("Could not trigger adding free items. Open Fab tab and try again.");
 		} finally {
