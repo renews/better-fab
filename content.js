@@ -506,7 +506,8 @@ async function processProductPage(pathname) {
 			entries.push({ card, metrics: getCardMetrics(card) });
 		}
 
-		const ratingSummary = getSellerRatingSummary(entries);
+		const validEntries = getValidSellerEntries(entries, sellerName);
+		const ratingSummary = getSellerRatingSummary(validEntries);
 		const profile = createSellerProfile();
 		
 		profile.style.marginTop = "16px";
@@ -1623,6 +1624,16 @@ function formatCount(value) {
 	return Math.round(value).toLocaleString();
 }
 
+function getValidSellerEntries(entries, targetSellerName) {
+	if (!targetSellerName) return entries;
+	const lowerTarget = targetSellerName.trim().toLowerCase();
+	return entries.filter((entry) => {
+		const href = getFirstProductOrListingHref(entry.card);
+		if (!href) return false;
+		return entry.metrics?.sellerName === lowerTarget;
+	});
+}
+
 function getSellerRatingSummary(entries) {
 	const totalPackages = entries.length;
 	let ratedPackages = 0;
@@ -1775,7 +1786,8 @@ function ensureSellerProfile(isSellerPage, entries, allowProfileQuery = true) {
 	sellerProfileElement = profile;
 	
 	const button = profile.querySelector(SELLER_PAGE_BUTTON_SELECTOR);
-	const ratingSummary = getSellerRatingSummary(entries);
+	const validEntries = getValidSellerEntries(entries, sellerName);
+	const ratingSummary = getSellerRatingSummary(validEntries);
 
 	button.dataset.seller = sellerName;
 	button.hidden = !config.showHideSellerButtons;
@@ -1783,7 +1795,7 @@ function ensureSellerProfile(isSellerPage, entries, allowProfileQuery = true) {
 
 	updateSellerProfileContent(profile, ratingSummary);
 
-	const sellerItemsContainer = getSellerItemsContainer(entries);
+	const sellerItemsContainer = getSellerItemsContainer(validEntries);
 	if (sellerItemsContainer?.parentElement) {
 		sellerItemsContainer.parentElement.insertBefore(
 			profile,
@@ -1796,10 +1808,7 @@ function ensureSellerProfile(isSellerPage, entries, allowProfileQuery = true) {
 		const heading = document.querySelector("h1");
 		if (heading?.parentElement) {
 			heading.parentElement.insertBefore(profile, heading.nextSibling);
-			return;
 		}
-
-		document.body.prepend(profile);
 	}
 }
 
