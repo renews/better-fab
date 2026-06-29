@@ -3,14 +3,14 @@ Better Fab transforms your experience on the Epic Games Fab marketplace by givin
 
 Features:
 
-•  Filter out items from sellers you want to ignore.
-•  Filter out items by specific keywords.
-•  Require a minimum number of reviews for items to appear.
-•  Advanced sorting: Sort items by rating to easily find the highest quality assets.
-•  Mass-Add Free Items: Automatically scrolls through the page and adds all visible free items directly to your library with a single click, saving you countless hours of manual clicking.
-•  Hide items you already own from search results.
-•  Product Page Enhancements: Automatically expands product descriptions so you don’t have to click “Show More”, and injects a detailed seller metrics profile directly under the title (showing total packages, review counts, and average star ratings).
-•  One-Click Ignore: Ignore sellers directly from their product page or seller profile.
+- Filter out items from sellers you want to ignore.
+- Filter out items by specific keywords.
+- Require a minimum number of reviews for items to appear.
+- Advanced sorting: Sort items by rating to easily find the highest quality assets.
+- Mass-Add Free Items: Automatically scrolls through the page and adds all visible free items directly to your library with a single click, saving you countless hours of manual clicking.
+- Hide items you already own from search results.
+- Product Page Enhancements: Automatically expands product descriptions so you don’t have to click “Show More”, and injects a detailed seller metrics profile directly under the title (showing total packages, review counts, and average star ratings).
+- One-Click Ignore: Ignore sellers directly from their product page or seller profile.
 
 How to Use:
 Simply click the Better Fab icon in your browser toolbar while on Fab.com. Use the popup menu to configure your filters, manage your ignored sellers list, or trigger the “Add Displaying Free Items” automation.
