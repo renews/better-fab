@@ -465,7 +465,8 @@ async function processProductPage(pathname) {
 	if (!sellerLink) return;
 
 	const sellerHref = sellerLink.getAttribute("href");
-	const sellerName = sellerHref.split("/sellers/")[1]?.split("?")[0];
+	const sellerName =
+		getSellerName(null, sellerLink) || getSellerNameFromSellerHref(sellerHref);
 	if (!sellerName) return;
 
 	const heading = document.querySelector("h1");
@@ -582,6 +583,13 @@ function getSellerNameFromPathname(pathname) {
 	} catch (err) {
 		return match[1].trim().toLowerCase();
 	}
+}
+
+function getSellerNameFromSellerHref(href) {
+	const match = String(href || "").match(/\/sellers\/([^?#]+)/i);
+	if (!match) return "";
+
+	return getSellerNameFromPathname(`/sellers/${match[1]}`);
 }
 
 function getCardText(card, initialText = null) {
@@ -1660,6 +1668,9 @@ function getValidSellerEntries(entries, targetSellerName, rootNode = document) {
 	});
 
 	if (potentialEntries.length === 0) return potentialEntries;
+
+	const isSellerPage = window.location.pathname.startsWith("/sellers/");
+	if (isSellerPage) return potentialEntries;
 
 	const primaryGrid = potentialEntries[0].card.parentElement;
 	return potentialEntries.filter(entry => entry.card.parentElement === primaryGrid);
