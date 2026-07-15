@@ -29,3 +29,11 @@ This project is inspired by the Chrome extension:
 
 The source code for this extension is available at:
 [https://codeberg.org/renews/better-fab](https://codeberg.org/renews/better-fab)
+
+## Development
+
+- Install the development dependencies with `bun install`.
+- Run the regression suite with `bun test`.
+- Build the Chrome Web Store archive with `bun run package`.
+- See `CONTEXT.md` for the runtime module seams and domain terms.
+- See `CHANGELOG.md` for release history.

@@ -11,7 +11,7 @@ Better Fab is a browser extension designed to enhance the Fab.com browsing exper
 
 ### Extension Permissions
 - **Storage:** Required solely to save your local preferences and filter configurations.
-- **Downloads:** Required solely to allow the extension to automatically download free items to your library when the auto-claim feature is used.
+- **Downloads:** Required solely when you choose to export your ignored-seller or keyword configuration as a local backup file. It is not used to download marketplace assets.
 - **Host Permissions (`*://*.fab.com/*`):** Required to run the extension's scripts on Fab.com in order to manipulate the page layout, add seller metrics, and apply your local filters.
 
 ### Changes to this Policy

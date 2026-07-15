@@ -159,6 +159,16 @@
                 color: #fff;
                 font-weight: bold;
             }
+            #error-message {
+                display: none;
+                margin-bottom: 12px;
+                padding: 10px;
+                border: 1px solid rgba(181, 48, 48, 0.55);
+                border-radius: 6px;
+                background: rgba(181, 48, 48, 0.2);
+                color: #ffb3b3;
+                font-size: 13px;
+            }
             .preset-list {
                 display: flex;
                 flex-direction: column;
@@ -181,6 +191,8 @@
         <div id="wrong-site-message">
             This extension only works on <br /><span>Fab.com</span>
         </div>
+
+        <div id="error-message" role="alert" hidden></div>
 
         <div id="app-content">
             <label class="toggle-row" for="toggle-saved">

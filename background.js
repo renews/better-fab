@@ -63,6 +63,20 @@ async function updateBadge(isActive) {
   });
 }
 
+let badgeUpdateVersion = 0;
+let badgeUpdateQueue = Promise.resolve();
+
+function updateBadgeInOrder(isActive, version) {
+  badgeUpdateQueue = badgeUpdateQueue
+    .catch(() => {})
+    .then(async () => {
+      if (version !== badgeUpdateVersion) return;
+      await updateBadge(isActive);
+    });
+
+  return badgeUpdateQueue;
+}
+
 async function getExtensionState() {
   const data = await chrome.storage.local.get(["extensionActive", "filterActive"]);
   if (typeof data.extensionActive === "boolean") {
@@ -88,10 +102,11 @@ async function setExtensionState(isActive) {
 }
 
 // On first load, check storage and update the icon
+const startupBadgeVersion = ++badgeUpdateVersion;
 (async () => {
   try {
     const currentState = await getExtensionState();
-    await updateBadge(currentState);
+    await updateBadgeInOrder(currentState, startupBadgeVersion);
   } catch (err) {
     console.error("Failed to initialize badge status:", err);
   }
@@ -102,9 +117,12 @@ chrome.storage.onChanged.addListener(async (changes, areaName) => {
   if (!changes.extensionActive) return;
 
   try {
-    await updateBadge(Boolean(changes.extensionActive.newValue));
+    const version = ++badgeUpdateVersion;
+    await updateBadgeInOrder(
+      Boolean(changes.extensionActive.newValue),
+      version,
+    );
   } catch (err) {
     console.error("Failed to update badge status on storage change:", err);
   }
 });
-

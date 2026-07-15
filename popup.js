@@ -1,9 +1,20 @@
 document.addEventListener("DOMContentLoaded", async () => {
+	const appContent = document.getElementById("app-content");
+	const wrongSiteMessage = document.getElementById("wrong-site-message");
+	const errorMessage = document.getElementById("error-message");
+
+	function showError(message) {
+		errorMessage.textContent = message;
+		errorMessage.hidden = false;
+		errorMessage.style.display = "block";
+	}
+
+	async function initializePopup() {
 	const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
 	if (!tab || !tab.url || !tab.url.includes("fab.com")) {
-		document.getElementById("app-content").style.display = "none";
-		document.getElementById("wrong-site-message").style.display = "block";
+		appContent.style.display = "none";
+		wrongSiteMessage.style.display = "block";
 		return;
 	}
 
@@ -106,44 +117,99 @@ document.addEventListener("DOMContentLoaded", async () => {
 	presetControls.push(applyPresetBtn, disablePresetBtn);
 	setExtensionButtons(extensionActive);
 
-	async function broadcastUpdate() {
-		const tabs = await chrome.tabs.query({ url: "*://*.fab.com/*" });
-		for (const t of tabs) {
-			chrome.tabs
-				.sendMessage(t.id, {
-					action: "update_filters",
-					filterActive,
-					hiddenSellers,
-					applySellerFilterInLibrary,
-					applySavedFilterOnSellerPage,
-					sortStarsByReviewCount,
-					showHideSellerButtons,
-					minimumReviewCount,
-					hiddenKeywords,
-					activeFilterPresets,
-					extensionActive,
-				})
-				.catch(() => { });
-		}
-	}
-
-	async function updateStorage() {
-		await chrome.storage.local.set({
+	function getSettingsSnapshot() {
+		return {
 			filterActive,
-			hiddenSellers,
+			hiddenSellers: [...hiddenSellers],
 			applySellerFilterInLibrary,
 			applySavedFilterOnSellerPage,
 			sortStarsByReviewCount,
 			showHideSellerButtons,
 			minimumReviewCount,
-			hiddenKeywords,
-			activeFilterPresets,
+			hiddenKeywords: [...hiddenKeywords],
+			activeFilterPresets: { ...activeFilterPresets },
 			extensionActive,
+		};
+	}
+
+	async function broadcastUpdate(settings = getSettingsSnapshot()) {
+		const tabs = await chrome.tabs.query({ url: "*://*.fab.com/*" });
+		await Promise.all(
+			tabs.map((tab) =>
+				chrome.tabs.sendMessage(tab.id, {
+					action: "update_filters",
+					...settings,
+				}),
+			),
+		);
+	}
+
+	async function updateStorage(settings = getSettingsSnapshot()) {
+		await chrome.storage.local.set(settings);
+	}
+
+	let persistedSettings = getSettingsSnapshot();
+	let persistenceQueue = Promise.resolve();
+	let persistenceRequestVersion = 0;
+	const latestRequestVersionBySetting = new Map();
+
+	function cloneSettingValue(value) {
+		if (Array.isArray(value)) return [...value];
+		if (value && typeof value === "object") return { ...value };
+		return value;
+	}
+
+	function cloneSettings(settings) {
+		return Object.fromEntries(
+			Object.entries(settings).map(([key, value]) => [
+				key,
+				cloneSettingValue(value),
+			]),
+		);
+	}
+
+	function enqueuePersistence(task) {
+		const pendingTask = persistenceQueue.catch(() => {}).then(task);
+		persistenceQueue = pendingTask.catch(() => {});
+		return pendingTask;
+	}
+
+	function persistChange(settingKey, rollback) {
+		const requestedSettings = getSettingsSnapshot();
+		const requestVersion = ++persistenceRequestVersion;
+		latestRequestVersionBySetting.set(settingKey, requestVersion);
+
+		return enqueuePersistence(async () => {
+			const settings = cloneSettings(persistedSettings);
+			settings[settingKey] = cloneSettingValue(
+				requestedSettings[settingKey],
+			);
+			try {
+				await updateStorage(settings);
+			} catch (err) {
+				if (
+					latestRequestVersionBySetting.get(settingKey) === requestVersion
+				) {
+					rollback(persistedSettings);
+				}
+				showError("Could not save changes. Please try again.");
+				return false;
+			}
+			persistedSettings = settings;
+
+			try {
+				await broadcastUpdate(settings);
+			} catch (err) {
+				showError(
+					"Changes were saved, but open Fab tabs could not be updated. Refresh them and try again.",
+				);
+			}
+			return true;
 		});
 	}
 
 	function setExtensionButtons(isActive) {
-		applyPresetBtn.disabled = isActive;
+		applyPresetBtn.disabled = isActive || isAddingVisibleFreeItems;
 		disablePresetBtn.disabled = !isActive;
 		extensionState.textContent = isActive
 			? "Active"
@@ -163,13 +229,21 @@ document.addEventListener("DOMContentLoaded", async () => {
 			removeBtn.className = "remove-btn";
 			removeBtn.onclick = async () => {
 				await onRemove(item);
-				await updateStorage();
+				const settingKey =
+					listElement === sellerList ? "hiddenSellers" : "hiddenKeywords";
+				const saved = await persistChange(settingKey, (persisted) => {
+					if (listElement === sellerList) {
+						hiddenSellers = [...persisted.hiddenSellers];
+					} else {
+						hiddenKeywords = [...persisted.hiddenKeywords];
+					}
+				});
+				if (!saved) return;
 				if (listElement === sellerList) {
 					renderList(sellerList, hiddenSellers, onSellerRemoved);
 				} else {
 					renderList(keywordList, hiddenKeywords, onKeywordRemoved);
 				}
-				await broadcastUpdate();
 			};
 
 			li.appendChild(removeBtn);
@@ -229,8 +303,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 				return;
 			}
 
-			if (!result.ok) {
-				alert(`Unable to add items: ${result.error || "unknown error"}`);
+			if (!result.ok || result.error) {
+				showError(`Unable to add items: ${result.error || "unknown error"}`);
 				return;
 			}
 
@@ -271,8 +345,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 			checkbox.checked = activeFilterPresets[preset.id];
 			checkbox.addEventListener("change", async (e) => {
 				activeFilterPresets[preset.id] = e.target.checked;
-				await updateStorage();
-				await broadcastUpdate();
+				await persistChange("activeFilterPresets", (persisted) => {
+					activeFilterPresets = { ...persisted.activeFilterPresets };
+					renderPresetList();
+				});
 			});
 
 			row.append(label, checkbox);
@@ -280,18 +356,24 @@ document.addEventListener("DOMContentLoaded", async () => {
 		});
 	}
 
-	async function applyPresetSelection() {
-		extensionActive = true;
-		await updateStorage();
-		await broadcastUpdate();
+	async function changeExtensionState(nextState) {
+		extensionActive = nextState;
+
+		const saved = await persistChange("extensionActive", (persisted) => {
+			extensionActive = persisted.extensionActive;
+			setExtensionButtons(extensionActive);
+		});
+		if (!saved) return;
+
 		setExtensionButtons(extensionActive);
 	}
 
+	async function applyPresetSelection() {
+		await changeExtensionState(true);
+	}
+
 	async function clearPresetSelection() {
-		extensionActive = false;
-		await updateStorage();
-		setExtensionButtons(extensionActive);
-		await broadcastUpdate();
+		await changeExtensionState(false);
 	}
 
 	applyPresetBtn.addEventListener("click", applyPresetSelection);
@@ -428,9 +510,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 	setupImport(sellerImportFile, async (cleanImport) => {
 		hiddenSellers = [...new Set([...hiddenSellers, ...cleanImport])];
-		await updateStorage();
+		const saved = await persistChange("hiddenSellers", (persisted) => {
+			hiddenSellers = [...persisted.hiddenSellers];
+		});
+		if (!saved) return;
 		renderList(sellerList, hiddenSellers, onSellerRemoved);
-		await broadcastUpdate();
 	});
 
 	exportKeywordsBtn.addEventListener("click", async () => {
@@ -447,39 +531,51 @@ document.addEventListener("DOMContentLoaded", async () => {
 
 	setupImport(keywordImportFile, async (cleanImport) => {
 		hiddenKeywords = [...new Set([...hiddenKeywords, ...cleanImport])];
-		await updateStorage();
+		const saved = await persistChange("hiddenKeywords", (persisted) => {
+			hiddenKeywords = [...persisted.hiddenKeywords];
+		});
+		if (!saved) return;
 		renderList(keywordList, hiddenKeywords, onKeywordRemoved);
-		await broadcastUpdate();
 	});
 
 	toggleSaved.addEventListener("change", async (e) => {
 		filterActive = e.target.checked;
-		await updateStorage();
-		await broadcastUpdate();
+		await persistChange("filterActive", (persisted) => {
+			filterActive = persisted.filterActive;
+			toggleSaved.checked = filterActive;
+		});
 	});
 
 	toggleSavedSellerPage.addEventListener("change", async (e) => {
 		applySavedFilterOnSellerPage = e.target.checked;
-		await updateStorage();
-		await broadcastUpdate();
+		await persistChange("applySavedFilterOnSellerPage", (persisted) => {
+			applySavedFilterOnSellerPage = persisted.applySavedFilterOnSellerPage;
+			toggleSavedSellerPage.checked = applySavedFilterOnSellerPage;
+		});
 	});
 
 	toggleHideSellerButtons.addEventListener("change", async (e) => {
 		showHideSellerButtons = e.target.checked;
-		await updateStorage();
-		await broadcastUpdate();
+		await persistChange("showHideSellerButtons", (persisted) => {
+			showHideSellerButtons = persisted.showHideSellerButtons;
+			toggleHideSellerButtons.checked = showHideSellerButtons;
+		});
 	});
 
 	toggleLibrarySeller.addEventListener("change", async (e) => {
 		applySellerFilterInLibrary = e.target.checked;
-		await updateStorage();
-		await broadcastUpdate();
+		await persistChange("applySellerFilterInLibrary", (persisted) => {
+			applySellerFilterInLibrary = persisted.applySellerFilterInLibrary;
+			toggleLibrarySeller.checked = applySellerFilterInLibrary;
+		});
 	});
 
 	toggleStarReviewSort.addEventListener("change", async (e) => {
 		sortStarsByReviewCount = e.target.checked;
-		await updateStorage();
-		await broadcastUpdate();
+		await persistChange("sortStarsByReviewCount", (persisted) => {
+			sortStarsByReviewCount = persisted.sortStarsByReviewCount;
+			toggleStarReviewSort.checked = sortStarsByReviewCount;
+		});
 	});
 
 	chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -496,11 +592,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 			? Math.max(0, nextValue)
 			: 0;
 		minReviewsInput.value = String(minimumReviewCount);
-		await updateStorage();
-		await broadcastUpdate();
+		await persistChange("minimumReviewCount", (persisted) => {
+			minimumReviewCount = persisted.minimumReviewCount;
+			minReviewsInput.value = String(minimumReviewCount);
+		});
 	});
 
 	addSellerBtn.addEventListener("click", async () => {
+		const previousInput = sellerInput.value;
 		const sellerName = sellerInput.value.trim().toLowerCase();
 		if (!sellerName) {
 			return onInvalidSellerInput();
@@ -510,9 +609,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 			hiddenSellers.push(sellerName);
 			hiddenSellers = [...new Set(hiddenSellers)];
 			sellerInput.value = "";
-			await updateStorage();
+			const saved = await persistChange("hiddenSellers", (persisted) => {
+				hiddenSellers = [...persisted.hiddenSellers];
+				sellerInput.value = previousInput;
+			});
+			if (!saved) return;
 			renderList(sellerList, hiddenSellers, onSellerRemoved);
-			await broadcastUpdate();
 		}
 	});
 
@@ -524,6 +626,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 	});
 
 	addKeywordBtn.addEventListener("click", async () => {
+		const previousInput = keywordInput.value;
 		const keyword = keywordInput.value.trim().toLowerCase();
 		if (!keyword) return;
 
@@ -531,9 +634,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 			hiddenKeywords.push(keyword);
 			hiddenKeywords = [...new Set(hiddenKeywords)];
 			keywordInput.value = "";
-			await updateStorage();
+			const saved = await persistChange("hiddenKeywords", (persisted) => {
+				hiddenKeywords = [...persisted.hiddenKeywords];
+				keywordInput.value = previousInput;
+			});
+			if (!saved) return;
 			renderList(keywordList, hiddenKeywords, onKeywordRemoved);
-			await broadcastUpdate();
 		}
 	});
 
@@ -543,4 +649,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 			addKeywordBtn.click();
 		}
 	});
+	}
+
+	try {
+		await initializePopup();
+	} catch (err) {
+		console.error("Failed to initialize Better Fab popup:", err);
+		appContent.style.display = "none";
+		wrongSiteMessage.style.display = "none";
+		showError("Better Fab could not load. Close the popup and try again.");
+	}
 });

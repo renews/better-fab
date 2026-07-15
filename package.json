@@ -1,0 +1,12 @@
+{
+	"name": "better-fab",
+	"private": true,
+	"scripts": {
+		"package": "bun run scripts/package-release.ts",
+		"test": "bun test"
+	},
+	"devDependencies": {
+		"fflate": "0.8.3",
+		"jsdom": "20.0.3"
+	}
+}

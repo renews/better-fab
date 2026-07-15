@@ -1,3 +1,34 @@
+const FabDomModule = globalThis.BetterFabModules?.fabDom;
+if (!FabDomModule) {
+	throw new Error("Better Fab DOM adapter did not load before content.js");
+}
+const SellerProfileModule = globalThis.BetterFabModules?.sellerProfile;
+if (!SellerProfileModule) {
+	throw new Error("Better Fab Seller Profile did not load before content.js");
+}
+const MassAddModule = globalThis.BetterFabModules?.massAdd;
+if (!MassAddModule) {
+	throw new Error("Better Fab Mass-Add did not load before content.js");
+}
+const ProcessingCoordinatorModule =
+	globalThis.BetterFabModules?.processingCoordinator;
+if (!ProcessingCoordinatorModule) {
+	throw new Error(
+		"Better Fab processing coordinator did not load before content.js",
+	);
+}
+
+function createFabDomAdapter(
+	root = document,
+	sourceLocation = window.location.pathname,
+) {
+	return FabDomModule.create({
+		root,
+		sourceLocation,
+		origin: window.location.origin,
+	});
+}
+
 let config = {
 	filterActive: true,
 	hiddenSellers: [],
@@ -15,6 +46,16 @@ let config = {
 	},
 	extensionActive: true,
 };
+
+const MassAddSession = MassAddModule.create({
+	document,
+	getCardMetrics,
+	getSource: () => createFabDomAdapter(document),
+	hasSavedItemMarker,
+	isActive: () => config.extensionActive,
+	notify: alert,
+	window,
+});
 let lastProcessedListingSignature = "";
 let lastProcessItemsCompletedAt = 0;
 let hiddenSellerSet = new Set();
@@ -45,7 +86,7 @@ let configuredQueryMatchCache = {
 	signature: "",
 	value: null,
 };
-let initialStartupProcessAttempts = 0;
+let extensionSettingsLoadAttempts = 0;
 
 
 const STAR_SORT_INDICATOR = /rating|reviews?|stars?/i;
@@ -59,10 +100,6 @@ const STAR_SORT_QUERY_KEYS = [
 const STAR_SORT_QUERY_KEY_SET = new Set(STAR_SORT_QUERY_KEYS);
 const STAR_SORT_QUERY_FRAGMENT = "ratings.averagerating";
 const THUMBNAIL_CLASS = "fabkit-Thumbnail-root";
-const THUMBNAIL_SELECTOR = `.${THUMBNAIL_CLASS}`;
-const PRODUCT_LINK_SELECTOR = 'a[href*="/products/"]';
-const LISTING_LINK_SELECTOR = 'a[href*="/listings/"]';
-const PRODUCT_OR_LISTING_LINK_SELECTOR = 'a[href*="/products/"], a[href*="/listings/"]';
 const IGNORE_SELLER_CARD_CLASS = "better-fab-ignore-seller-card";
 const IGNORE_SELLER_BUTTON_CLASS = "better-fab-ignore-seller-btn";
 const SELLER_PROFILE_CLASS = "better-fab-seller-profile";
@@ -75,7 +112,6 @@ const SELLER_PROFILE_SELECTOR = `.${SELLER_PROFILE_CLASS}`;
 const SELLER_PROFILE_AVERAGE_SELECTOR = `.${SELLER_PROFILE_AVERAGE_CLASS}`;
 const SELLER_PROFILE_COUNT_SELECTOR = `.${SELLER_PROFILE_COUNT_CLASS}`;
 const SELLER_PAGE_BUTTON_SELECTOR = `.${SELLER_PAGE_BUTTON_CLASS}`;
-const SELLER_ROW_SELECTOR = `.${SELLER_ROW_CLASS}`;
 const SAVED_ITEM_SUCCESS_CLASS = "fabkit-Typography--intent-success";
 const SAVED_ITEM_ICON_CLASS = "edsicon-check-circle-filled";
 const CARD_TEXT_ATTRIBUTE_SELECTOR =
@@ -117,70 +153,12 @@ const PRESET_KEYWORDS = {
 const CARD_METRICS_CACHE = new WeakMap();
 const CARD_SELLER_INFO_CACHE = new WeakMap();
 const CARD_FILTER_RESULT_CACHE = new WeakMap();
-const LISTING_NODE_CARD_CACHE = new WeakMap();
 const CARD_CONTENT_VERSION_CACHE = new WeakMap();
 const CARD_DOM_SIGNATURE_CACHE = new WeakMap();
 const EMPTY_ENTRIES = [];
-const LIBRARY_BUTTON_SELECTOR =
-	"button, a[role='button'], [role='button'], [data-action], [data-testid], [data-test], a[href], [aria-label], [title]";
-const LIBRARY_ACTION_HINTS =
-	/\b(add|add to|save|save to|saved|get|install|library|collection|wishlist|bookmark)\b/i;
-const LIBRARY_REVEAL_EVENT_TYPES = [
-	"pointerover",
-	"mouseover",
-	"mouseenter",
-	"mousemove",
-];
-const FREE_PRICE_PATTERNS = [
-	/\$\s*0(?:[.,]\d{1,2})?\b/i,
-	/\b0(?:[.,]\d{1,2})?\s*(?:usd|eur|gbp|aud|cad|nzd|brl|mxn|inr|jpy|krw|cny)?\b/i,
-	/(?:^|\s|[A-Z$£€¥₹])0(?:[.,]\d{1,2})?\b/i,
-	/\b(?:free|gratis)\b/i,
-	/\bprice\s*(?:is|:)?\s*(?:free|0(?:[.,]\d{1,2})?)\b/i,
-	/\bno\s+cost\b/i,
-];
-const ADD_LIBRARY_TEXT_PATTERNS = [
-	/add\s+to\s+library/i,
-	/save\s+to\s+library/i,
-	/\badd\s+to\s+collection\b/i,
-	/\bsave\s+to\s+my\s+list\b/i,
-	/\bsave\b/i,
-	/\badd\b/i,
-	/\bget\b/i,
-	/\binstalled?\b/i,
-];
-const LICENSE_MODAL_SELECTOR = 'div[role="dialog"][aria-modal="true"]';
-const LICENSE_MODAL_TITLE_SELECTOR = ".fabkit-Modal-title";
-const LICENSE_FORM_FIELD_SELECTOR = ".fabkit-FormField-root";
-const LICENSE_MODAL_ADD_BUTTON_SELECTOR = ".fabkit-Modal-actions button";
-const LICENSE_MODAL_CLOSE_SELECTOR = ".fabkit-Modal-closeButton";
-const ADD_LIBRARY_ACTION_SELECTOR =
-	"button, a, [role='button'], [data-action], [data-testid], [data-test], [aria-label], [title]";
-const PRICE_ATTRIBUTE_SELECTORS = [
-	"[data-price]",
-	"[data-test='price']",
-	"[data-qa='price']",
-	"[data-testid*='price']",
-	"[itemprop='price']",
-];
-const PRICE_ATTRIBUTE_SELECTOR = PRICE_ATTRIBUTE_SELECTORS.join(", ");
-const LICENSE_ACTION_REVEAL_DELAY_MS = 120;
-const ADD_LIBRARY_PROXIMITY_RADIUS_PX = 260;
-const MUTATION_PROCESS_DEBOUNCE_MS = 175;
-const MUTATION_PROCESS_IDLE_TIMEOUT_MS = 700;
-const STABLE_LISTING_REPROCESS_INTERVAL_MS = 5000;
-const SKIP_LIBRARY_BUTTON_PATTERNS = [
-	/\balready\s+in\s+library\b/i,
-	/\bin\s+library\b/i,
-	/\bsaved\b/i,
-	/\bowned\b/i,
-	/\bremove\s+from\s+library\b/i,
-];
-const LICENSE_NO_MODAL_DEBOUNCE_MIN_MS = 50;
-const LICENSE_NO_MODAL_DEBOUNCE_MAX_MS = 150;
-const LICENSE_MODAL_WAIT_CLOSE_MAX_MS = 1200;
-const INITIAL_STARTUP_PROCESS_ATTEMPTS = 10;
-const INITIAL_STARTUP_PROCESS_DELAY_MS = 300;
+const EXTENSION_SETTINGS_LOAD_ATTEMPTS = 3;
+const EXTENSION_SETTINGS_RETRY_DELAY_MS = 250;
+const PRODUCT_SELLER_FETCH_ATTEMPTS = 2;
 
 function hasAiGeneratedKeywordMatch(searchText) {
 	for (const pattern of PRESET_KEYWORDS.ai) {
@@ -206,20 +184,6 @@ const FILTER_PRESETS = [
 			metrics.rating >= 4,
 	},
 ];
-
-function normalizeListingPath(path) {
-	if (!path) return "";
-
-	try {
-		return new URL(path, window.location.origin).pathname.toLowerCase();
-	} catch (err) {
-		return String(path || "")
-			.trim()
-			.toLowerCase()
-			.split("?")[0]
-			.split("#")[0];
-	}
-}
 
 function sanitizeList(values) {
 	if (!Array.isArray(values)) return [];
@@ -446,8 +410,21 @@ function setCachedCardFilterResult(
 	});
 }
 
-let lastProcessedProductPath = null;
+let lastProcessedProductIdentity = null;
 let lastExpandedProductPath = null;
+let productPageLifecycleVersion = 0;
+let productRequestInFlightIdentity = null;
+let productRequestInFlightVersion = 0;
+let renderedProductIdentity = null;
+
+function isCurrentProductLifecycle(pathname, productIdentity, lifecycleVersion) {
+	return (
+		config.extensionActive &&
+		productPageLifecycleVersion === lifecycleVersion &&
+		window.location.pathname === pathname &&
+		lastProcessedProductIdentity === productIdentity
+	);
+}
 
 async function processProductPage(pathname) {
 	if (lastExpandedProductPath !== pathname) {
@@ -468,6 +445,7 @@ async function processProductPage(pathname) {
 	const sellerName =
 		getSellerName(null, sellerLink) || getSellerNameFromSellerHref(sellerHref);
 	if (!sellerName) return;
+	const productIdentity = `${pathname}|${sellerHref}`;
 
 	const heading = document.querySelector("h1");
 	if (!heading) return;
@@ -485,60 +463,137 @@ async function processProductPage(pathname) {
 		const targetBlock = heading.closest(".fabkit-Stack-root") || heading.parentElement;
 		if (targetBlock && targetBlock.parentElement) {
 			targetBlock.parentElement.insertBefore(productWidgetContainer, targetBlock.nextSibling);
+			needsExtensionCleanup = true;
 		}
 	}
 
-	if (!document.querySelector(".better-fab-product-ignore-btn")) {
-		const btnContainer = document.createElement("div");
+	let btnContainer = productWidgetContainer.querySelector(
+		".better-fab-product-ignore-btn",
+	);
+	if (!btnContainer) {
+		btnContainer = document.createElement("div");
 		btnContainer.className = "better-fab-product-ignore-btn";
 		btnContainer.style.marginBottom = "16px";
-		
-		const btn = createSellerProfileButton();
-		btn.dataset.seller = sellerName;
-		updateSellerPageIgnoreButton(btn, sellerName);
-		btnContainer.appendChild(btn);
-		
 		productWidgetContainer.appendChild(btnContainer);
 	}
+	let btn = btnContainer.querySelector(SELLER_PAGE_BUTTON_SELECTOR);
+	if (!btn) {
+		btn = createSellerProfileButton();
+		btnContainer.appendChild(btn);
+	}
+	btn.dataset.seller = sellerName;
+	updateSellerPageIgnoreButton(btn, sellerName);
 
-	if (lastProcessedProductPath === pathname) return;
-	lastProcessedProductPath = pathname;
+	const existingProfile = document.getElementById(
+		"better-fab-product-profile",
+	);
+	const hasRenderedProfile =
+		renderedProductIdentity === productIdentity &&
+		existingProfile?.parentElement === productWidgetContainer;
+	const hasInFlightRequest =
+		productRequestInFlightIdentity === productIdentity &&
+		productRequestInFlightVersion !== 0;
+	if (
+		lastProcessedProductIdentity === productIdentity &&
+		(hasRenderedProfile || hasInFlightRequest)
+	) {
+		return;
+	}
+	document.getElementById("better-fab-product-profile")?.remove();
+	renderedProductIdentity = null;
+	lastProcessedProductIdentity = productIdentity;
+	productPageLifecycleVersion += 1;
+	const lifecycleVersion = productPageLifecycleVersion;
+	productRequestInFlightIdentity = productIdentity;
+	productRequestInFlightVersion = lifecycleVersion;
 
 	try {
-		const response = await fetch(sellerHref);
-		if (!response.ok) return;
+		let response = null;
+		let fetchError = null;
+		for (let attempt = 0; attempt < PRODUCT_SELLER_FETCH_ATTEMPTS; attempt += 1) {
+			if (!isCurrentProductLifecycle(pathname, productIdentity, lifecycleVersion)) {
+				return;
+			}
+
+			try {
+				const candidateResponse = await fetch(sellerHref);
+				if (candidateResponse.ok) {
+					response = candidateResponse;
+					break;
+				}
+			} catch (error) {
+				fetchError = error;
+			}
+		}
+
+		if (!response) {
+			if (
+				productPageLifecycleVersion === lifecycleVersion &&
+				lastProcessedProductIdentity === productIdentity
+			) {
+				lastProcessedProductIdentity = null;
+			}
+			if (fetchError) {
+				console.error("Failed to fetch seller metrics for product page", fetchError);
+			}
+			return;
+		}
 		const html = await response.text();
+		if (!isCurrentProductLifecycle(pathname, productIdentity, lifecycleVersion)) {
+			return;
+		}
 
 		const parser = new DOMParser();
 		const doc = parser.parseFromString(html, "text/html");
 
 		const listingNodes = getListingScanNodes(doc);
 		const entries = [];
+		const processedCards = new Set();
 		for (const item of listingNodes) {
 			const card = getCardFromListingNode(item);
-			if (!card) continue;
+			if (!card || processedCards.has(card)) continue;
+			processedCards.add(card);
 			entries.push({ card, metrics: getCardMetrics(card) });
 		}
 
-		const validEntries = getValidSellerEntries(entries, sellerName, doc);
-		const ratingSummary = getSellerRatingSummary(validEntries);
+		const sellerProfile = SellerProfileModule.analyze({
+			entries,
+			sellerName,
+			source: createFabDomAdapter(doc, sellerHref),
+		});
 		const profile = createSellerProfile();
 		
 		profile.style.marginTop = "16px";
 		profile.style.marginBottom = "16px";
 		profile.querySelector(SELLER_PAGE_BUTTON_SELECTOR)?.remove();
 
-		updateSellerProfileContent(profile, ratingSummary);
+		updateSellerProfileContent(profile, sellerProfile.presentation);
 
-		const existingProfile = document.getElementById("better-fab-product-profile");
-		if (existingProfile) existingProfile.remove();
+		document.getElementById("better-fab-product-profile")?.remove();
 		
 		profile.id = "better-fab-product-profile";
-		if (productWidgetContainer) {
-			productWidgetContainer.appendChild(profile);
+		const currentProductWidgetContainer = document.getElementById(
+			"better-fab-product-widget",
+		);
+		if (currentProductWidgetContainer?.isConnected) {
+			currentProductWidgetContainer.appendChild(profile);
+			renderedProductIdentity = productIdentity;
+		} else if (isCurrentProductLifecycle(pathname, productIdentity, lifecycleVersion)) {
+			lastProcessedProductIdentity = null;
 		}
 	} catch (e) {
+		if (
+			productPageLifecycleVersion === lifecycleVersion &&
+			lastProcessedProductIdentity === productIdentity
+		) {
+			lastProcessedProductIdentity = null;
+		}
 		console.error("Failed to fetch seller metrics for product page", e);
+	} finally {
+		if (productRequestInFlightVersion === lifecycleVersion) {
+			productRequestInFlightIdentity = null;
+			productRequestInFlightVersion = 0;
+		}
 	}
 }
 
@@ -547,7 +602,7 @@ function getSellerLink(card) {
 	if (!links) return null;
 
 	for (const link of links) {
-		if (link.getAttribute("href")?.startsWith("/sellers/")) return link;
+		if (getSellerNameFromSellerHref(link.getAttribute("href"))) return link;
 	}
 
 	return null;
@@ -555,7 +610,10 @@ function getSellerLink(card) {
 
 function getSellerName(card, sellerLink = getSellerLink(card)) {
 	if (!sellerLink) return "";
-	return sellerLink.textContent.trim().toLowerCase();
+	return (
+		sellerLink.textContent.trim().toLowerCase() ||
+		getSellerNameFromSellerHref(sellerLink.getAttribute("href"))
+	);
 }
 
 function getCardSellerInfo(card) {
@@ -565,6 +623,9 @@ function getCardSellerInfo(card) {
 
 	const sellerLink = getSellerLink(card);
 	const info = {
+		sellerIdentity: getSellerNameFromSellerHref(
+			sellerLink?.getAttribute("href"),
+		),
 		sellerLink,
 		sellerName: getSellerName(card, sellerLink),
 	};
@@ -573,23 +634,11 @@ function getCardSellerInfo(card) {
 }
 
 function getSellerNameFromPathname(pathname) {
-	const match = pathname.match(/^\/sellers\/([^/?#]+)/);
-	if (!match) return "";
-
-	try {
-		return decodeURIComponent(match[1].replace(/\+/g, " "))
-			.trim()
-			.toLowerCase();
-	} catch (err) {
-		return match[1].trim().toLowerCase();
-	}
+	return FabDomModule.getSellerNameFromPathname(pathname);
 }
 
 function getSellerNameFromSellerHref(href) {
-	const match = String(href || "").match(/\/sellers\/([^?#]+)/i);
-	if (!match) return "";
-
-	return getSellerNameFromPathname(`/sellers/${match[1]}`);
+	return FabDomModule.getSellerNameFromHref(href);
 }
 
 function getCardText(card, initialText = null) {
@@ -613,652 +662,12 @@ function getCardText(card, initialText = null) {
 	return text.toLowerCase();
 }
 
-function hasFreePricePatternMatch(value) {
-	const text = String(value || "");
-	for (const pattern of FREE_PRICE_PATTERNS) {
-		if (pattern.test(text)) return true;
-	}
-
-	return false;
-}
-
-function isFreeByText(value) {
-	return hasFreePricePatternMatch(value);
-}
-
-function hasFreePriceFromCard(card, metrics) {
-	const search = metrics.searchText || "";
-	const priceNodes = card.querySelectorAll(PRICE_ATTRIBUTE_SELECTOR);
-
-	for (const node of priceNodes) {
-		const content = String(
-			node.getAttribute("content") ||
-				node.getAttribute("value") ||
-				node.getAttribute("data-price") ||
-				node.textContent ||
-				"",
-		).toLowerCase();
-
-		if (hasFreePricePatternMatch(content)) return true;
-	}
-
-	if (/\b\$\s*0(?:[.,]\d{1,2})?\b|\bfree\b/.test(search)) return true;
-
-	return false;
-}
-
-function sleep(ms) {
-	return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function randomDebounceDelayMs() {
-	const range =
-		LICENSE_NO_MODAL_DEBOUNCE_MAX_MS - LICENSE_NO_MODAL_DEBOUNCE_MIN_MS;
-	const delta = Math.floor(Math.random() * (range + 1));
-	return LICENSE_NO_MODAL_DEBOUNCE_MIN_MS + delta;
-}
-
-function dispatchInteractionEvents(target) {
-	if (!target) return;
-
-	if (typeof target.focus === "function") target.focus({ preventScroll: true });
-
-	const rect = target.getBoundingClientRect();
-	const clientX = Math.max(1, rect.left + Math.min(rect.width, 1) / 2);
-	const clientY = Math.max(1, rect.top + Math.min(rect.height, 1) / 2);
-
-	for (const type of LIBRARY_REVEAL_EVENT_TYPES) {
-		target.dispatchEvent(
-			new MouseEvent(type, {
-				bubbles: true,
-				cancelable: true,
-				view: window,
-				clientX,
-				clientY,
-			}),
-		);
-	}
-}
-
-async function revealCardActionControls(card) {
-	const host = card.closest("article, section, li, div") || card;
-	const thumbnail = card.querySelector(THUMBNAIL_SELECTOR);
-	const listingLink = card.querySelector(PRODUCT_OR_LISTING_LINK_SELECTOR);
-
-	for (let pass = 0; pass < 2; pass += 1) {
-		dispatchInteractionEvents(card);
-		dispatchInteractionEvents(thumbnail);
-		dispatchInteractionEvents(listingLink);
-		dispatchInteractionEvents(host);
-
-		const rect = card.getBoundingClientRect();
-		if (rect.width > 0 && rect.height > 0) {
-			dispatchInteractionEvents(
-				document.elementFromPoint(
-					rect.left + rect.width / 2,
-					rect.top + rect.height / 2,
-				),
-			);
-			dispatchInteractionEvents(
-				document.elementFromPoint(rect.left + 4, rect.top + 4),
-			);
-			dispatchInteractionEvents(
-				document.elementFromPoint(rect.right - 4, rect.top + 4),
-			);
-			dispatchInteractionEvents(
-				document.elementFromPoint(rect.left + 4, rect.bottom - 4),
-			);
-		}
-
-		await sleep(40);
-	}
-
-	await sleep(LICENSE_ACTION_REVEAL_DELAY_MS);
-}
-
-function isPriceFree(value) {
-	return hasFreePricePatternMatch(value);
-}
-
-function getVisibleLicenseModal() {
-	const dialogs = document.querySelectorAll(LICENSE_MODAL_SELECTOR);
-
-	for (const dialog of dialogs) {
-		if (!dialog?.isConnected) continue;
-
-		const rect = dialog.getBoundingClientRect();
-		if (rect.width === 0 || rect.height === 0) continue;
-		if (dialog.getAttribute("aria-hidden") === "true") continue;
-
-		const titleElement = dialog.querySelector(LICENSE_MODAL_TITLE_SELECTOR);
-		const legacyTitle = dialog.querySelector("h2");
-		const titleText = String(
-			titleElement?.textContent || legacyTitle?.textContent || "",
-		).toLowerCase();
-		if (titleText.includes("license tier")) return dialog;
-	}
-
-	return null;
-}
-
-async function waitForLicenseModal(timeoutMs = 900) {
-	const endTime = Date.now() + timeoutMs;
-	while (Date.now() < endTime) {
-		const modal = getVisibleLicenseModal();
-		if (modal) return modal;
-		await sleep(60);
-	}
-
-	return null;
-}
-
-async function waitForLicenseModalToClose(
-	modal,
-	timeoutMs = LICENSE_MODAL_WAIT_CLOSE_MAX_MS,
-) {
-	if (!modal) return;
-
-	const endTime = Date.now() + timeoutMs;
-	while (Date.now() < endTime) {
-		if (!modal.isConnected) return;
-		if (!document.body || !document.body.contains(modal)) return;
-
-		const rect = modal.getBoundingClientRect();
-		if (rect.width === 0 || rect.height === 0) return;
-		if (modal.getAttribute("aria-hidden") === "true") return;
-
-		await sleep(60);
-	}
-}
-
-function getPreferredLicenseInput(modal) {
-	const fields = modal.querySelectorAll(LICENSE_FORM_FIELD_SELECTOR);
-	let hasProfessional = false;
-	let hasPersonal = false;
-	let professionalInput = null;
-	let personalInput = null;
-	let professionalIsFree = false;
-	let personalIsFree = false;
-
-	const allCandidates = [];
-
-	for (const field of fields) {
-		const label = field.querySelector("label");
-		const labelText = String(label?.textContent || "").toLowerCase();
-		const optionText = String(field.textContent || "").toLowerCase();
-		if (!labelText && !optionText) continue;
-
-		const clickableTarget =
-			field.querySelector("label") ||
-			field;
-
-		if (!clickableTarget) continue;
-
-		const isFree = isPriceFree(optionText) || isPriceFree(labelText);
-		allCandidates.push({ input: clickableTarget, isFree, text: optionText + " " + labelText });
-
-		const isPersonal = /\bpersonal\b/.test(labelText);
-		const isProfessional = /\bprofessional\b/.test(labelText);
-
-		if (isProfessional && !hasProfessional) {
-			hasProfessional = true;
-			professionalInput = clickableTarget;
-			professionalIsFree = isFree;
-		} else if (isPersonal && !hasPersonal) {
-			hasPersonal = true;
-			personalInput = clickableTarget;
-			personalIsFree = isFree;
-		}
-	}
-
-	if (hasPersonal && personalIsFree) return personalInput;
-	if (hasProfessional && professionalIsFree) return professionalInput;
-
-	const freeCandidate = allCandidates.find((c) => c.isFree);
-	if (freeCandidate) return freeCandidate.input;
-
-	return null;
-}
-
-function closeLicenseModal(modal) {
-	const closeButton = modal.querySelector(
-		'button[aria-label="Close"], .fabkit-Modal-closeButton, .close-button, button svg'
-	)?.closest('button');
-	if (closeButton) {
-        closeButton.click();
-    } else {
-        const buttons = modal.querySelectorAll('button');
-        for (const btn of buttons) {
-            if (!btn.textContent.trim()) {
-                btn.click();
-                break;
-            }
-        }
-    }
-}
-
-function getLicenseModalAddButton(modal) {
-	const actionButtons = modal.querySelectorAll(
-		LICENSE_MODAL_ADD_BUTTON_SELECTOR,
-	);
-
-	for (const button of actionButtons) {
-		const text = String(
-			button.textContent || button.getAttribute("aria-label") || "",
-		)
-			.trim()
-			.toLowerCase();
-		if (
-			text.includes("add") ||
-			text.includes("save") ||
-			text.includes("confirm") ||
-			text.includes("checkout") ||
-			text.includes("get") ||
-			text.includes("accept")
-		) {
-			return button;
-		}
-	}
-
-	if (actionButtons.length > 0) {
-		return actionButtons[actionButtons.length - 1];
-	}
-
-	return null;
-}
-
-function closeLicenseModal(modal) {
-	const closeButton = modal.querySelector(
-		`${LICENSE_MODAL_CLOSE_SELECTOR}, button[aria-label="Close"]`,
-	);
-	if (closeButton) {
-		closeButton.click();
-		return;
-	}
-
-	const esc = new KeyboardEvent("keydown", {
-		bubbles: true,
-		cancelable: true,
-		key: "Escape",
-		keyCode: 27,
-	});
-	window.dispatchEvent(esc);
-}
-
-async function handleLicenseSelectionForLastClick() {
-	const modal = await waitForLicenseModal();
-	if (!modal) return { status: "none", hadModal: false, modal: null };
-
-	let preferredInput = getPreferredLicenseInput(modal);
-	let renderAttempts = 0;
-	while (!preferredInput && renderAttempts < 15) {
-		await sleep(100);
-		preferredInput = getPreferredLicenseInput(modal);
-		renderAttempts++;
-	}
-
-	if (!preferredInput) {
-		closeLicenseModal(modal);
-		return { status: "skipped", hadModal: true, modal };
-	}
-
-	if (preferredInput.tagName === "INPUT" && !preferredInput.checked) {
-		preferredInput.click();
-		await sleep(50);
-	} else if (preferredInput.tagName !== "INPUT") {
-		preferredInput.click();
-		await sleep(50);
-	}
-
-	let addButton = getLicenseModalAddButton(modal);
-	let btnAttempts = 0;
-	while (!addButton && btnAttempts < 15) {
-		await sleep(100);
-		addButton = getLicenseModalAddButton(modal);
-		btnAttempts++;
-	}
-
-	if (!addButton) {
-		closeLicenseModal(modal);
-		return { status: "skipped", hadModal: true, modal };
-	}
-
-	const endTime = Date.now() + 1200;
-	while (addButton.disabled && Date.now() < endTime) {
-		await sleep(70);
-		addButton = getLicenseModalAddButton(modal);
-		if (!addButton) {
-			closeLicenseModal(modal);
-			return { status: "skipped", hadModal: true, modal };
-		}
-	}
-
-	if (addButton.disabled) {
-		closeLicenseModal(modal);
-		return { status: "skipped", hadModal: true, modal };
-	}
-
-	addButton.click();
-	await sleep(150);
-	return { status: "added", hadModal: true, modal };
-}
-
-function hasSkipLibraryButtonText(text) {
-	for (const pattern of SKIP_LIBRARY_BUTTON_PATTERNS) {
-		if (pattern.test(text)) return true;
-	}
-
-	return false;
-}
-
-function hasAddLibraryActionText(text) {
-	for (const pattern of ADD_LIBRARY_TEXT_PATTERNS) {
-		if (pattern.test(text)) return true;
-	}
-
-	return false;
-}
-
-function getAddLibraryCandidateText(element) {
-	return String(
-		`${element.textContent || ""} ${element.getAttribute("aria-label") || ""} ${
-			element.title || ""
-		}`,
-	)
-		.toLowerCase()
-		.trim();
-}
-
-function isAddLibraryCandidate(element, options = {}) {
-	if (!element) return false;
-	if (element.closest(IGNORE_SELLER_BUTTON_SELECTOR)) return false;
-	if (element.getAttribute("aria-disabled") === "true") return false;
-	if (element.disabled) return false;
-
-	const requireStrictText = options.requireStrictText ?? true;
-	const skipVisibilityCheck = options.skipVisibilityCheck === true;
-
-	if (!skipVisibilityCheck && element.offsetParent === null) {
-		const bounds = element.getBoundingClientRect();
-		if (!bounds.width && !bounds.height) return false;
-	}
-
-	const href = String(element.getAttribute("href") || "").toLowerCase();
-	if (
-		element.tagName === "A" &&
-		href &&
-		(href.includes("/products/") ||
-			href.includes("/listings/") ||
-			href.includes("/sellers/"))
-	) {
-		return false;
-	}
-
-	const text = options.text ?? getAddLibraryCandidateText(element);
-	if (!text) return false;
-	if (hasSkipLibraryButtonText(text)) {
-		return false;
-	}
-
-	if (!LIBRARY_ACTION_HINTS.test(text)) return false;
-
-	if (!requireStrictText) {
-		return true;
-	}
-
-	return hasAddLibraryActionText(text);
-}
-
-function getAddLibraryButton(card, options = {}) {
-	const candidates = card.querySelectorAll(LIBRARY_BUTTON_SELECTOR);
-	for (const candidate of candidates) {
-		if (isAddLibraryCandidate(candidate, options)) return candidate;
-	}
-
-	return null;
-}
-
-function getRectDistanceSquared(rectA, rectB) {
-	const deltaX = Math.max(
-		rectA.left - rectB.right,
-		rectB.left - rectA.right,
-		0,
-	);
-	const deltaY = Math.max(
-		rectA.top - rectB.bottom,
-		rectB.top - rectA.bottom,
-		0,
-	);
-	return deltaX * deltaX + deltaY * deltaY;
-}
-
-function findNearbyAddLibraryButton(card) {
-	const cardRect = card.getBoundingClientRect();
-	if (!cardRect || (!cardRect.width && !cardRect.height)) return null;
-
-	const maxDistance = Math.max(
-		ADD_LIBRARY_PROXIMITY_RADIUS_PX,
-		cardRect.width,
-		cardRect.height,
-	);
-	const maxDistanceSquared = maxDistance * maxDistance;
-
-	let closestCandidate = null;
-	let closestDistanceSquared = Infinity;
-	const candidates = document.querySelectorAll(ADD_LIBRARY_ACTION_SELECTOR);
-
-	for (const candidate of candidates) {
-		let rect = null;
-		if (candidate.offsetParent === null) {
-			rect = candidate.getBoundingClientRect();
-			if (!rect || (!rect.width && !rect.height)) continue;
-		}
-
-		if (
-			!isAddLibraryCandidate(candidate, {
-				requireStrictText: false,
-				skipVisibilityCheck: true,
-			})
-		) {
-			continue;
-		}
-
-		if (!rect) {
-			rect = candidate.getBoundingClientRect();
-			if (!rect || (!rect.width && !rect.height)) continue;
-		}
-
-		const distanceSquared = getRectDistanceSquared(cardRect, rect);
-		if (
-			distanceSquared > maxDistanceSquared ||
-			distanceSquared >= closestDistanceSquared
-		) {
-			continue;
-		}
-
-		closestCandidate = candidate;
-		closestDistanceSquared = distanceSquared;
-	}
-
-	return closestCandidate;
-}
-
-async function findAddButtonForCard(card) {
-	await revealCardActionControls(card);
-	let button = getAddLibraryButton(card, { skipVisibilityCheck: false });
-	if (button) return button;
-
-	button = getAddLibraryButton(card, { skipVisibilityCheck: true });
-	if (button) return button;
-
-
-	return findNearbyAddLibraryButton(card);
-}
-
-async function ensureNoActiveModal(timeoutMs = 1500) {
-	const endTime = Date.now() + timeoutMs;
-	while (Date.now() < endTime) {
-		const modal = getVisibleLicenseModal();
-		if (!modal) return;
-		await sleep(90);
-	}
-}
-
-let isMassAdding = false;
-
-async function addVisibleFreeItemsToLibrary() {
-	if (isMassAdding) return { error: "Already running" };
-	isMassAdding = true;
-
-	const massProcessedCards = new Set();
-	const cumulative = {
-		attempted: 0,
-		added: 0,
-		alreadyInLibrary: 0,
-		skipped: 0,
-		noActionButton: 0,
-	};
-	let noNewItemsCount = 0;
-	const MAX_NO_NEW_ITEMS = 3;
-
-	try {
-		while (isMassAdding) {
-			const batchResult = await processVisibleBatch(massProcessedCards);
-			
-			cumulative.attempted += batchResult.attempted;
-			cumulative.added += batchResult.added;
-			cumulative.alreadyInLibrary += batchResult.alreadyInLibrary;
-			cumulative.skipped += batchResult.skipped;
-			cumulative.noActionButton += batchResult.noActionButton;
-			
-			window.scrollTo({
-				top: document.body.scrollHeight,
-				behavior: "smooth"
-			});
-			
-			await sleep(2000);
-			
-			if (batchResult.attempted === 0) {
-				noNewItemsCount += 1;
-				if (noNewItemsCount >= MAX_NO_NEW_ITEMS) {
-					break;
-				}
-				await sleep(2000);
-			} else {
-				noNewItemsCount = 0;
-			}
-		}
-	} finally {
-		isMassAdding = false;
-	}
-
-	alert(
-		`The extension Better Fab says\n\n` +
-		`Visible free items processed: ${cumulative.attempted}. Added: ${cumulative.added}. ` +
-		`Already in library: ${cumulative.alreadyInLibrary}. Failed to click: ${cumulative.skipped}. ` +
-		`No action button: ${cumulative.noActionButton}`
-	);
-
-	return cumulative;
-}
-
-async function processVisibleBatch(massProcessedCards) {
-	const listingNodes = getListingScanNodes();
-	const cards = [];
-
-	for (const item of listingNodes) {
-		const card = getCardFromListingNode(item);
-		if (!card || massProcessedCards.has(card)) continue;
-		massProcessedCards.add(card);
-		if (card.classList.contains("fab-hidden-item")) continue;
-
-		const rect = card.getBoundingClientRect();
-		if (rect.width === 0 || rect.height === 0) continue;
-
-		const metrics = getCardMetrics(card);
-		const isFree =
-			isFreeByText(metrics.searchText) || hasFreePriceFromCard(card, metrics);
-		if (!isFree) continue;
-
-		cards.push({ card, metrics });
-	}
-
-	cards.sort((a, b) => {
-		const rectA = a.card.getBoundingClientRect();
-		const rectB = b.card.getBoundingClientRect();
-		if (Math.abs(rectA.top - rectB.top) > 5) {
-			return rectA.top - rectB.top;
-		}
-		return rectA.left - rectB.left;
-	});
-
-	let attempted = cards.length;
-	let added = 0;
-	let alreadyInLibrary = 0;
-	let skipped = 0;
-	let noActionButton = 0;
-
-	for (const { card } of cards) {
-		await ensureNoActiveModal();
-
-		const button = await findAddButtonForCard(card);
-		if (!button) {
-			noActionButton += 1;
-			continue;
-		}
-
-		const label = String(
-			`${button.textContent || ""} ${button.getAttribute("aria-label") || ""} ${
-				button.title || ""
-			}`,
-		)
-			.toLowerCase()
-			.trim();
-		if (hasSkipLibraryButtonText(label) || /in\s+library/.test(label)) {
-			alreadyInLibrary += 1;
-			continue;
-		}
-
-		try {
-			button.scrollIntoView({
-				behavior: "auto",
-				block: "center",
-				inline: "center",
-			});
-			await sleep(70);
-
-			button.click();
-
-			const licenseResult = await handleLicenseSelectionForLastClick();
-			if (licenseResult.hadModal) {
-				await waitForLicenseModalToClose(licenseResult.modal);
-			} else {
-				await sleep(randomDebounceDelayMs());
-			}
-
-			if (licenseResult.status === "skipped") {
-				skipped += 1;
-				continue;
-			}
-
-			added += 1;
-		} catch (err) {
-			skipped += 1;
-		}
-	}
-
-	return {
-		attempted,
-		added,
-		alreadyInLibrary,
-		skipped,
-		noActionButton,
-	};
-}
-
 function parseCountToken(value) {
 	const raw = String(value || "").trim();
-	const normalized = raw.replace(/,/g, "");
+	const isGroupedThousands = /^\d{1,3}(?:[.,]\d{3})+$/.test(raw);
+	const normalized = isGroupedThousands
+		? raw.replace(/[.,]/g, "")
+		: raw.replace(/,/g, "");
 	const multiplier = /[kKmM]$/.test(normalized)
 		? /[kK]$/.test(normalized)
 			? 1000
@@ -1307,188 +716,39 @@ function parseRating(value, fabRatingCount = parseFabRatingCount(value)) {
 	return null;
 }
 
-function getCachedCardFromListingNode(listingNode) {
-	const cached = LISTING_NODE_CARD_CACHE.get(listingNode);
-	if (!cached?.isConnected) return null;
-	if (!cached.contains(listingNode)) return null;
-	return cached;
-}
-
-function cacheCardFromListingNode(listingNode, card) {
-	if (card) LISTING_NODE_CARD_CACHE.set(listingNode, card);
-	return card;
-}
-
-function isProductHref(href) {
-	return (
-		href.startsWith("/products/") ||
-		href.includes("://www.fab.com/products/") ||
-		href.includes("://fab.com/products/")
-	);
-}
-
-function isProductOrListingHref(href) {
-	if (!href) return false;
-	const lowerHref = href.toLowerCase();
-	if (
-		lowerHref.includes("/tags/") ||
-		lowerHref.includes("/category/") ||
-		lowerHref.includes("/channels/") ||
-		lowerHref.includes("/collections/") ||
-		lowerHref.includes("/sellers/") ||
-		lowerHref.includes("/about/") ||
-		lowerHref.includes("/search") ||
-		lowerHref.includes("/login") ||
-		lowerHref.includes("/cart") ||
-		lowerHref.includes("/library")
-	) {
-		return false;
-	}
-	
-	if (/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i.test(href)) return true;
-	if (/\/([a-z]{2}(?:-[a-zA-Z]{2,4})?\/)?(products|listings|models|assets|items|plugins|environments|materials|characters|vehicles|weapons|props)\//i.test(href)) return true;
-	if (/\/\d+-[a-z0-9-]+/i.test(href)) return true;
-
-	const path = href.split('?')[0].split('#')[0];
-	const segments = path.split('/').filter(Boolean);
-	if (segments.length >= 2 && !href.startsWith("javascript:") && !href.startsWith("mailto:")) {
-		return true;
-	}
-
-	return false;
-}
-
 function isProductOrListingLinkElement(node) {
-	return (
-		node?.localName === "a" &&
-		isProductOrListingHref(node.getAttribute("href") || "")
-	);
+	const root = node?.ownerDocument || document;
+	return createFabDomAdapter(root).isProductOrListingLink(node);
 }
 
 function getFirstProductOrListingHref(node) {
-	const links = node.getElementsByTagName?.("a");
-	if (!links) return "";
-
-	for (const link of links) {
-		const href = link.getAttribute("href") || "";
-		if (isProductOrListingHref(href)) return href;
-	}
-
-	return "";
+	const root = node?.ownerDocument || document;
+	return createFabDomAdapter(root).getFirstListingHref(node);
 }
 
 function getProductOrListingLinks(root = document) {
-	const links = root.getElementsByTagName?.("a");
-	const listingLinks = [];
-	if (!links) return listingLinks;
-
-	for (const link of links) {
-		if (isProductOrListingHref(link.getAttribute("href") || "")) {
-			listingLinks.push(link);
-		}
-	}
-
-	return listingLinks;
+	return createFabDomAdapter(root).getProductOrListingLinks();
 }
 
 function getListingDescendantNodes(root, limit = Number.POSITIVE_INFINITY) {
-	const listingNodes = [];
-	const thumbnails = root.getElementsByClassName?.(THUMBNAIL_CLASS);
-	if (thumbnails) {
-		for (const thumbnail of thumbnails) {
-			listingNodes.push(thumbnail);
-			if (listingNodes.length >= limit) return listingNodes;
-		}
-	}
-
-	const links = root.getElementsByTagName?.("a");
-	if (links) {
-		for (const link of links) {
-			if (isProductOrListingHref(link.getAttribute("href") || "")) {
-				listingNodes.push(link);
-				if (listingNodes.length >= limit) return listingNodes;
-			}
-		}
-	}
-
-	return listingNodes;
+	return createFabDomAdapter(root).getListingDescendants(root, limit);
 }
 
 function addListingDescendantCards(root, changedCards) {
-	let foundListingNode = false;
-	const thumbnails = root.getElementsByClassName?.(THUMBNAIL_CLASS);
-	if (thumbnails) {
-		for (const thumbnail of thumbnails) {
-			foundListingNode = true;
-			const card = getCardFromListingNode(thumbnail);
-			if (card) changedCards.add(card);
-		}
-	}
-
-	const links = root.getElementsByTagName?.("a");
-	if (links) {
-		for (const link of links) {
-			if (!isProductOrListingHref(link.getAttribute("href") || "")) continue;
-
-			foundListingNode = true;
-			const card = getCardFromListingNode(link);
-			if (card) changedCards.add(card);
-		}
-	}
-
-	return foundListingNode;
-}
-
-function isCardContainerElement(node) {
-	const tagName = node?.localName;
-	return (
-		tagName === "article" ||
-		tagName === "section" ||
-		tagName === "li" ||
-		tagName === "div"
+	return createFabDomAdapter(root).addListingDescendantCards(
+		root,
+		changedCards,
 	);
 }
 
 function isListingNodeElement(node) {
-	return (
-		node?.classList?.contains(THUMBNAIL_CLASS) ||
-		isProductOrListingLinkElement(node)
-	);
+	const root = node?.ownerDocument || document;
+	return createFabDomAdapter(root).isListingNode(node);
 }
 
 function getCardFromListingNode(listingNode) {
-	if (!listingNode) return null;
-	if (listingNode.closest?.(LICENSE_MODAL_SELECTOR)) return null;
-
-	const cachedCard = getCachedCardFromListingNode(listingNode);
-	if (cachedCard) return cachedCard;
-
-
-	let node = listingNode;
-	let attempts = 0;
-
-	while (node && node !== document.body && attempts < 16) {
-		const parent = node.parentElement;
-		if (parent && parent !== document.body) {
-			const siblings = parent.children;
-			if (siblings.length >= 2) {
-				const uniqueHrefs = new Set();
-				for (const sibling of siblings) {
-					const href = getFirstProductOrListingHref(sibling);
-					if (href) {
-						uniqueHrefs.add(href.split('?')[0].split('#')[0]);
-						if (uniqueHrefs.size >= 2) {
-							return cacheCardFromListingNode(listingNode, node);
-						}
-					}
-				}
-			}
-		}
-		node = node.parentElement;
-		attempts += 1;
-	}
-
-	return cacheCardFromListingNode(listingNode, listingNode.parentElement);
+	const root = listingNode?.ownerDocument || document;
+	return createFabDomAdapter(root).getCard(listingNode);
 }
 
 function getCardMetricsSignature(card, knownHref = null) {
@@ -1632,7 +892,7 @@ async function addSellerToIgnoreList(sellerName) {
 
 	markFilterSettingsChanged();
 	await chrome.storage.local.set({ hiddenSellers: nextHiddenSellers });
-	processItems();
+	ProcessingCoordinator.request({ cause: "seller-ignore" });
 }
 
 function updateSellerPageIgnoreButton(button, sellerName) {
@@ -1643,85 +903,6 @@ function updateSellerPageIgnoreButton(button, sellerName) {
 
 	if (button.disabled !== isIgnored) button.disabled = isIgnored;
 	setTextContent(button, label);
-}
-
-function formatCount(value) {
-	return Math.round(value).toLocaleString();
-}
-
-function getValidSellerEntries(entries, targetSellerName, rootNode = document) {
-	if (!targetSellerName) return entries;
-	const lowerTarget = targetSellerName.trim().toLowerCase();
-	
-	const h1 = rootNode.querySelector("h1");
-
-	const potentialEntries = entries.filter((entry) => {
-		const href = getFirstProductOrListingHref(entry.card);
-		if (!href) return false;
-		
-		if (h1 && !(h1.compareDocumentPosition(entry.card) & Node.DOCUMENT_POSITION_FOLLOWING)) {
-			return false;
-		}
-
-		const sellerName = entry.metrics?.sellerName || "";
-		return sellerName === "" || sellerName === lowerTarget;
-	});
-
-	if (potentialEntries.length === 0) return potentialEntries;
-
-	const isSellerPage = window.location.pathname.startsWith("/sellers/");
-	if (isSellerPage) return potentialEntries;
-
-	const primaryGrid = potentialEntries[0].card.parentElement;
-	return potentialEntries.filter(entry => entry.card.parentElement === primaryGrid);
-}
-
-function getSellerRatingSummary(entries) {
-	const totalPackages = entries.length;
-	let ratedPackages = 0;
-	let reviewedPackages = 0;
-	let totalReviews = 0;
-	let weightedTotal = 0;
-	let ratingTotal = 0;
-
-	for (const entry of entries) {
-		const { rating, reviewCount } = entry.metrics;
-		if (rating === null) continue;
-
-		ratedPackages += 1;
-		ratingTotal += rating;
-
-		if (reviewCount === null || reviewCount <= 0) continue;
-
-		reviewedPackages += 1;
-		totalReviews += reviewCount;
-		weightedTotal += rating * reviewCount;
-	}
-
-	if (totalReviews > 0) {
-		return {
-			average: weightedTotal / totalReviews,
-			totalPackages,
-			totalReviews,
-			ratedPackages: reviewedPackages,
-		};
-	}
-
-	if (ratedPackages > 0) {
-		return {
-			average: ratingTotal / ratedPackages,
-			totalPackages,
-			totalReviews: 0,
-			ratedPackages,
-		};
-	}
-
-	return {
-		average: null,
-		totalPackages,
-		totalReviews: 0,
-		ratedPackages: 0,
-	};
 }
 
 function getSellerItemsContainer(entries) {
@@ -1787,26 +968,12 @@ function removeSellerProfile(allowQuery = true) {
 	if (existingProfile) sellerProfileElement = null;
 }
 
-function updateSellerProfileContent(profile, ratingSummary) {
+function updateSellerProfileContent(profile, presentation) {
 	const averageElement = profile.querySelector(SELLER_PROFILE_AVERAGE_SELECTOR);
 	const countElement = profile.querySelector(SELLER_PROFILE_COUNT_SELECTOR);
 
-	const averageText =
-		ratingSummary.average === null
-			? "No ratings yet"
-			: `${ratingSummary.average.toFixed(1)} / 5`;
-	const reviewText =
-		ratingSummary.totalReviews > 0
-			? `${formatCount(ratingSummary.totalReviews)} reviews`
-			: "0 reviews";
-	const packageText =
-		ratingSummary.totalPackages === 1
-			? "1 package"
-			: `${formatCount(ratingSummary.totalPackages)} packages`;
-	const countText = `${reviewText} across ${packageText}`;
-
-	setTextContent(averageElement, averageText);
-	setTextContent(countElement, countText);
+	setTextContent(averageElement, presentation.averageText);
+	setTextContent(countElement, presentation.countText);
 }
 
 function ensureSellerProfile(isSellerPage, entries, allowProfileQuery = true) {
@@ -1828,14 +995,17 @@ function ensureSellerProfile(isSellerPage, entries, allowProfileQuery = true) {
 	sellerProfileElement = profile;
 	
 	const button = profile.querySelector(SELLER_PAGE_BUTTON_SELECTOR);
-	const validEntries = getValidSellerEntries(entries, sellerName);
-	const ratingSummary = getSellerRatingSummary(validEntries);
+	const sellerProfile = SellerProfileModule.analyze({
+		entries,
+		sellerName,
+		source: createFabDomAdapter(document, window.location.pathname),
+	});
 
 	button.dataset.seller = sellerName;
 	button.hidden = !config.showHideSellerButtons;
 	updateSellerPageIgnoreButton(button, sellerName);
 
-	updateSellerProfileContent(profile, ratingSummary);
+	updateSellerProfileContent(profile, sellerProfile.presentation);
 
 	const targetDiv = document.querySelector(".fabkit-Stack-root.DFhlZJF3");
 	if (targetDiv && targetDiv.parentElement) {
@@ -1845,7 +1015,7 @@ function ensureSellerProfile(isSellerPage, entries, allowProfileQuery = true) {
 		return;
 	}
 
-	const sellerItemsContainer = getSellerItemsContainer(validEntries);
+	const sellerItemsContainer = getSellerItemsContainer(sellerProfile.entries);
 	if (sellerItemsContainer?.parentElement) {
 		if (profile.nextElementSibling !== sellerItemsContainer) {
 			sellerItemsContainer.parentElement.insertBefore(
@@ -2095,13 +1265,18 @@ function disableExtensionManipulations(listingNodes) {
 	}
 
 	removeSellerProfile();
+	document.getElementById("better-fab-product-widget")?.remove();
+	productPageLifecycleVersion += 1;
+	lastProcessedProductIdentity = null;
+	lastExpandedProductPath = null;
+	productRequestInFlightIdentity = null;
+	productRequestInFlightVersion = 0;
+	renderedProductIdentity = null;
 	needsExtensionCleanup = false;
 }
 
 function getListingScanNodes(root = document) {
-	const listingLinks = getProductOrListingLinks(root);
-	if (listingLinks.length > 0) return listingLinks;
-	return root.getElementsByClassName(THUMBNAIL_CLASS);
+	return createFabDomAdapter(root).getListingNodes();
 }
 
 function cleanupExtensionManipulations(listingSetSignature = null) {
@@ -2313,6 +1488,7 @@ function processItems(
 	const pathname = processingState?.pathname || window.location.pathname;
 
 	if (!config.extensionActive) {
+		MassAddSession.stop();
 		cleanupExtensionManipulations(listingSetSignature);
 		return;
 	}
@@ -2521,9 +1697,35 @@ function processItems(
 	markListingSetProcessed(currentListingSetSignature);
 }
 
+const ProcessingCoordinator = ProcessingCoordinatorModule.create({
+	cancelIdle:
+		typeof window.cancelIdleCallback === "function"
+			? window.cancelIdleCallback.bind(window)
+			: () => {},
+	clearTimer: clearTimeout,
+	getLastReconciliation: () => ({
+		completedAt: lastProcessItemsCompletedAt,
+		signature: lastProcessedListingSignature,
+	}),
+	getListingSignature: getListingSetSignature,
+	getProcessingState: getCardProcessingState,
+	hasInitialSignals: hasInitialListingSignals,
+	hasPotentialWork: hasPotentialCardProcessingWork,
+	isActive: () => config.extensionActive,
+	reconcile({ listingSetSignature, targetCards, processingState }) {
+		processItems(listingSetSignature, targetCards, processingState);
+	},
+	requestIdle:
+		typeof window.requestIdleCallback === "function"
+			? window.requestIdleCallback.bind(window)
+			: null,
+	setTimer: setTimeout,
+});
+
 
 
 async function initializeExtension() {
+	extensionSettingsLoadAttempts += 1;
 	try {
 		const data = await chrome.storage.local.get([
 			"filterActive",
@@ -2570,11 +1772,21 @@ async function initializeExtension() {
 		}
 		if (data.extensionActive !== undefined) {
 			config.extensionActive = data.extensionActive;
+		} else {
+			config.extensionActive = data.filterActive !== false;
 		}
 		markFilterSettingsChanged();
-		processItems();
-		queueStartupProcess();
+		extensionSettingsLoadAttempts = 0;
+		ProcessingCoordinator.request({ cause: "initialization" });
+		ProcessingCoordinator.request({ cause: "startup" });
 	} catch (err) {
+		if (extensionSettingsLoadAttempts < EXTENSION_SETTINGS_LOAD_ATTEMPTS) {
+			console.warn("Retrying extension settings load:", err);
+			setTimeout(() => {
+				void initializeExtension();
+			}, EXTENSION_SETTINGS_RETRY_DELAY_MS);
+			return;
+		}
 		console.error("Failed to load extension settings from storage:", err);
 	}
 }
@@ -2586,19 +1798,6 @@ function hasInitialListingSignals() {
 		getProductOrListingLinks().length > 0 ||
 		document.getElementsByClassName(THUMBNAIL_CLASS).length > 0
 	);
-}
-
-function queueStartupProcess() {
-	if (!config.extensionActive) return;
-	if (!hasPotentialCardProcessingWork()) return;
-	if (initialStartupProcessAttempts >= INITIAL_STARTUP_PROCESS_ATTEMPTS) return;
-	if (hasInitialListingSignals()) return;
-
-	initialStartupProcessAttempts += 1;
-	setTimeout(() => {
-		processItems();
-		queueStartupProcess();
-	}, INITIAL_STARTUP_PROCESS_DELAY_MS);
 }
 
 chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
@@ -2688,7 +1887,9 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 		}
 
 		if (filterSettingsChanged) markFilterSettingsChanged();
-		if (shouldProcess) processItems();
+		if (shouldProcess) {
+			ProcessingCoordinator.request({ cause: "message" });
+		}
 	}
 
 	if (request.action === "update_state") {
@@ -2708,13 +1909,19 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 			}
 		}
 		if (filterStateChanged) markFilterSettingsChanged();
-		if (shouldProcess) processItems();
+		if (shouldProcess) {
+			ProcessingCoordinator.request({ cause: "message" });
+		}
 	}
 
 	if (request.action === "add_free_library") {
 		void (async () => {
 			try {
-				const result = await addVisibleFreeItemsToLibrary();
+				const result = await MassAddSession.run();
+				if (result?.error) {
+					sendResponse({ ok: false, error: result.error });
+					return;
+				}
 				sendResponse({ ok: true, ...result });
 			} catch (err) {
 				sendResponse({
@@ -2775,7 +1982,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
 	)
 		return;
 	if (filterSettingsChanged) markFilterSettingsChanged();
-	if (shouldProcess) processItems();
+	if (shouldProcess) {
+		ProcessingCoordinator.request({ cause: "storage" });
+	}
 });
 
 function isBetterFabManagedNode(node) {
@@ -2878,90 +2087,11 @@ function collectChangedListingCards(mutations, includeRemovedNodes = false) {
 	return changedCards;
 }
 
-let debounceTimeout = null;
-let idleCallbackId = null;
-let pendingMutationCards = new Set();
-let pendingFullMutationScan = false;
-
-function mergePendingMutationCards(targetCards) {
-	if (pendingMutationCards.size === 0) return targetCards;
-
-	for (const card of pendingMutationCards) {
-		targetCards.add(card);
-	}
-	pendingMutationCards = new Set();
-	return targetCards;
-}
-
-function scheduleProcessItemsFromMutation(forceFullScan = false) {
-	if (forceFullScan) pendingFullMutationScan = true;
-	if (debounceTimeout !== null || idleCallbackId !== null) return;
-
-	debounceTimeout = setTimeout(() => {
-		debounceTimeout = null;
-
-		if (!config.extensionActive) {
-			pendingMutationCards = new Set();
-			pendingFullMutationScan = false;
-			return;
-		}
-
-		const currentCardProcessingState = getCardProcessingState();
-		if (!currentCardProcessingState.hasWork) {
-			pendingMutationCards = new Set();
-			pendingFullMutationScan = false;
-			return;
-		}
-
-		const shouldForceFullScan = pendingFullMutationScan;
-		pendingFullMutationScan = false;
-		const targetCards = shouldForceFullScan ? null : pendingMutationCards;
-		pendingMutationCards = new Set();
-		const hasTargetCards = targetCards?.size > 0;
-		const listingSetSignature = hasTargetCards
-			? null
-			: getListingSetSignature();
-		const timeSinceLastProcess = Date.now() - lastProcessItemsCompletedAt;
-		if (
-			!shouldForceFullScan &&
-			!hasTargetCards &&
-			listingSetSignature === lastProcessedListingSignature &&
-			timeSinceLastProcess < STABLE_LISTING_REPROCESS_INTERVAL_MS
-		) {
-			return;
-		}
-
-		if (typeof window.requestIdleCallback === "function") {
-			idleCallbackId = window.requestIdleCallback(
-				() => {
-					idleCallbackId = null;
-					const runFullScan = shouldForceFullScan || pendingFullMutationScan;
-					if (runFullScan) {
-						pendingFullMutationScan = false;
-						pendingMutationCards = new Set();
-					}
-					processItems(
-						runFullScan ? null : listingSetSignature,
-						runFullScan ? null : mergePendingMutationCards(targetCards),
-						currentCardProcessingState,
-					);
-				},
-				{ timeout: MUTATION_PROCESS_IDLE_TIMEOUT_MS },
-			);
-			return;
-		}
-
-		processItems(
-			shouldForceFullScan ? null : listingSetSignature,
-			targetCards,
-			currentCardProcessingState,
-		);
-	}, MUTATION_PROCESS_DEBOUNCE_MS);
-}
-
-function hasAddedMutationNodes(mutations) {
+function hasRelevantProductPageMutation(mutations) {
 	for (const mutation of mutations) {
-		if (mutation.addedNodes.length > 0) return true;
+		for (const node of [...mutation.addedNodes, ...mutation.removedNodes]) {
+			if (getRelevantMutationElement(node)) return true;
+		}
 	}
 
 	return false;
@@ -2972,6 +2102,8 @@ const observer = new MutationObserver((mutations) => {
 
 	const pathname = window.location.pathname;
 	const isSellerPage = pathname.startsWith("/sellers/");
+	const isProductPage =
+		pathname.startsWith("/listings/") || pathname.startsWith("/products/");
 	const potentialStarSortWork = isSellerPage
 		? false
 		: hasPotentialStarSortWork();
@@ -2989,16 +2121,23 @@ const observer = new MutationObserver((mutations) => {
 		mutations,
 		shouldTrackRemovedCards,
 	);
-	if (!changedCards.size) return;
-
-	let addedPendingCard = false;
-	for (const card of changedCards) {
-		if (pendingMutationCards.has(card)) continue;
-		markCardContentChanged(card);
-		pendingMutationCards.add(card);
-		addedPendingCard = true;
+	if (!changedCards.size) {
+		if (isProductPage && hasRelevantProductPageMutation(mutations)) {
+			ProcessingCoordinator.request({
+				cause: "mutation",
+				forceFullScan: true,
+			});
+		}
+		return;
 	}
-	if (addedPendingCard) scheduleProcessItemsFromMutation();
+
+	for (const card of changedCards) {
+		markCardContentChanged(card);
+	}
+	ProcessingCoordinator.request({
+		cards: changedCards,
+		cause: "mutation",
+	});
 });
 
 observer.observe(document.body, {
