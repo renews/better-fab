@@ -1,8 +1,66 @@
 (function installSellerProfileModule(globalScope) {
 	"use strict";
 
+	function getEntryMetricRichness(entry) {
+		const metrics = entry.metrics || {};
+		return (
+			(metrics.reviewCount === null || metrics.reviewCount === undefined ? 0 : 2) +
+			(metrics.rating === null || metrics.rating === undefined ? 0 : 1)
+		);
+	}
+
+	function hasCompleteMetrics(entry) {
+		return getEntryMetricRichness(entry) === 3;
+	}
+
+	function mergeDuplicateEntries(existing, candidate) {
+		if (hasCompleteMetrics(existing)) return existing;
+		if (hasCompleteMetrics(candidate)) return candidate;
+
+		const preferred =
+			getEntryMetricRichness(candidate) > getEntryMetricRichness(existing)
+				? candidate
+				: existing;
+		const alternate = preferred === existing ? candidate : existing;
+		const preferredMetrics = preferred.metrics || {};
+		const alternateMetrics = alternate.metrics || {};
+		return {
+			...preferred,
+			metrics: {
+				...preferredMetrics,
+				rating:
+					preferredMetrics.rating === null ||
+					preferredMetrics.rating === undefined
+						? alternateMetrics.rating
+						: preferredMetrics.rating,
+				reviewCount:
+					preferredMetrics.reviewCount === null ||
+					preferredMetrics.reviewCount === undefined
+						? alternateMetrics.reviewCount
+						: preferredMetrics.reviewCount,
+			},
+		};
+	}
+
+	function deduplicateEntries(entries, source) {
+		const entriesByListingIdentity = new Map();
+
+		for (const entry of entries) {
+			const href = source.getFirstListingHref(entry.card);
+			const identity = source.getListingIdentity?.(href) || href;
+			const key = identity || entry;
+			const existing = entriesByListingIdentity.get(key);
+			entriesByListingIdentity.set(
+				key,
+				existing ? mergeDuplicateEntries(existing, entry) : entry,
+			);
+		}
+
+		return [...entriesByListingIdentity.values()];
+	}
+
 	function selectEntries(entries, sellerName, source) {
-		if (!sellerName) return [...entries];
+		if (!sellerName) return deduplicateEntries(entries, source);
 		const normalizedSeller = String(sellerName).trim().toLowerCase();
 		const sourceSellerIdentity = String(
 			source.getSourceSellerName?.() || "",
@@ -24,12 +82,15 @@
 		});
 
 		if (potentialEntries.length === 0 || source.isSellerPage()) {
-			return potentialEntries;
+			return deduplicateEntries(potentialEntries, source);
 		}
 
 		const primaryGrid = potentialEntries[0].card.parentElement;
-		return potentialEntries.filter(
-			(entry) => entry.card.parentElement === primaryGrid,
+		return deduplicateEntries(
+			potentialEntries.filter(
+				(entry) => entry.card.parentElement === primaryGrid,
+			),
+			source,
 		);
 	}
 
@@ -38,25 +99,29 @@
 		let ratedPackages = 0;
 		let reviewedPackages = 0;
 		let totalReviews = 0;
+		let ratedReviewCount = 0;
 		let weightedTotal = 0;
 		let ratingTotal = 0;
 
 		for (const entry of entries) {
 			const { rating, reviewCount } = entry.metrics;
-			if (rating === null) continue;
+			if (reviewCount !== null && reviewCount > 0) {
+				totalReviews += reviewCount;
+			}
 
+			if (rating === null) continue;
 			ratedPackages += 1;
 			ratingTotal += rating;
 			if (reviewCount === null || reviewCount <= 0) continue;
 
 			reviewedPackages += 1;
-			totalReviews += reviewCount;
+			ratedReviewCount += reviewCount;
 			weightedTotal += rating * reviewCount;
 		}
 
-		if (totalReviews > 0) {
+		if (ratedReviewCount > 0) {
 			return {
-				average: weightedTotal / totalReviews,
+				average: weightedTotal / ratedReviewCount,
 				totalPackages,
 				totalReviews,
 				ratedPackages: reviewedPackages,
@@ -67,7 +132,7 @@
 			return {
 				average: ratingTotal / ratedPackages,
 				totalPackages,
-				totalReviews: 0,
+				totalReviews,
 				ratedPackages,
 			};
 		}
@@ -75,7 +140,7 @@
 		return {
 			average: null,
 			totalPackages,
-			totalReviews: 0,
+			totalReviews,
 			ratedPackages: 0,
 		};
 	}
@@ -87,7 +152,9 @@
 	function present(summary) {
 		const averageText =
 			summary.average === null
-				? "No ratings yet"
+				? summary.totalReviews > 0
+					? "Rating unavailable"
+					: "No ratings yet"
 				: `${summary.average.toFixed(1)} / 5`;
 		const reviewText =
 			summary.totalReviews > 0

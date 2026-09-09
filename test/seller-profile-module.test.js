@@ -185,6 +185,129 @@ test("Seller Profile excludes unrelated sections without collapsing seller grids
 	});
 });
 
+test("Seller Profile retains reviews when a rating is unavailable", () => {
+	const { sellerProfile } = loadModules();
+	const mixedSummary = sellerProfile.summarize([
+		{ metrics: { rating: 4, reviewCount: 2 } },
+		{ metrics: { rating: null, reviewCount: 3 } },
+	]);
+	const unavailableSummary = sellerProfile.summarize([
+		{ metrics: { rating: null, reviewCount: 2 } },
+		{ metrics: { rating: null, reviewCount: 1 } },
+	]);
+	const unweightedSummary = sellerProfile.summarize([
+		{ metrics: { rating: 4, reviewCount: null } },
+		{ metrics: { rating: null, reviewCount: 3 } },
+	]);
+
+	expect({
+		mixed: {
+			presentation: sellerProfile.present(mixedSummary),
+			summary: mixedSummary,
+		},
+		unavailable: {
+			presentation: sellerProfile.present(unavailableSummary),
+			summary: unavailableSummary,
+		},
+		unweighted: {
+			presentation: sellerProfile.present(unweightedSummary),
+			summary: unweightedSummary,
+		},
+	}).toEqual({
+		mixed: {
+			presentation: {
+				averageText: "4.0 / 5",
+				countText: "5 reviews across 2 packages",
+			},
+			summary: {
+				average: 4,
+				ratedPackages: 1,
+				totalPackages: 2,
+				totalReviews: 5,
+			},
+		},
+		unavailable: {
+			presentation: {
+				averageText: "Rating unavailable",
+				countText: "3 reviews across 2 packages",
+			},
+			summary: {
+				average: null,
+				ratedPackages: 0,
+				totalPackages: 2,
+				totalReviews: 3,
+			},
+		},
+		unweighted: {
+			presentation: {
+				averageText: "4.0 / 5",
+				countText: "3 reviews across 2 packages",
+			},
+			summary: {
+				average: 4,
+				ratedPackages: 1,
+				totalPackages: 2,
+				totalReviews: 3,
+			},
+		},
+	});
+});
+
+test("Seller Profile deduplicates canonical listing aliases without losing richer metrics", () => {
+	const dom = new JSDOM(`<!doctype html>
+		<body>
+			<h1>Acme Studio</h1>
+			<section>
+				<article id="package-one">
+					<h3><a href="/products/one?placement=title">Title</a></h3>
+					<a href="https://www.fab.com/en-US/products/one/#image">Image</a>
+					<span>4.0 (7)</span>
+				</article>
+				<article id="package-two">
+					<a href="/listings/two/">Second package</a>
+				</article>
+			</section>
+		</body>`);
+	const modules = loadModules();
+	const source = modules.fabDom.create({
+		root: dom.window.document,
+		sourceLocation: "/sellers/acme-studio",
+		origin: "https://www.fab.com",
+	});
+	const [title, image, second] = source.getListingNodes();
+	const result = modules.sellerProfile.analyze({
+		entries: [
+			{
+				card: source.getCard(title),
+				metrics: { rating: 4, reviewCount: null, sellerName: "" },
+			},
+			{
+				card: source.getCard(image),
+				metrics: { rating: null, reviewCount: 7, sellerName: "" },
+			},
+			{
+				card: source.getCard(second),
+				metrics: { rating: 3, reviewCount: 1, sellerName: "" },
+			},
+		],
+		sellerName: "acme studio",
+		source,
+	});
+
+	expect({
+		entryIds: result.entries.map((entry) => entry.card.id),
+		summary: result.summary,
+	}).toEqual({
+		entryIds: ["package-one", "package-two"],
+		summary: {
+			average: 31 / 8,
+			ratedPackages: 2,
+			totalPackages: 2,
+			totalReviews: 8,
+		},
+	});
+});
+
 test("extension loads Seller Profile after Fab DOM and before the content adapter", async () => {
 	const manifest = await Bun.file(
 		new URL("../manifest.json", import.meta.url),

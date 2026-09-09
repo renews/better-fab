@@ -2,6 +2,19 @@
 
 All notable changes to Better Fab are documented in this file.
 
+## [1.1.3] - 2026-09-09
+
+### Fixed
+
+- Prevented Mass-Add from treating nonzero subunit prices as free when scanning cards or selecting a license tier.
+- Counted only valid Fab listing routes in seller metrics, excluding footer and external links from package totals.
+- Deduplicated canonical listing aliases while retaining complementary rating and review-count data.
+- Kept known review totals when ratings are unavailable and calculated weighted averages only from reviews with known ratings.
+
+### Changed
+
+- Stabilized product-page seller-metrics test completion after asynchronous work.
+
 ## [1.1.2] - 2026-07-15
 
 ### Fixed

@@ -22,8 +22,7 @@ afterEach(() => {
 });
 
 async function flushExtensionWork() {
-	await Promise.resolve();
-	await Promise.resolve();
+	await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function deferred() {
@@ -215,6 +214,39 @@ test("product seller metrics exclude packages linked to another seller", async (
 	).toBe("7 reviews across 1 package");
 });
 
+test("product seller metrics ignore fetched footer navigation and duplicate listing fragments", async () => {
+	const page = await loadProductPage({
+		fetchSeller: async () => ({
+			ok: true,
+			text: async () => `<!doctype html>
+				<body>
+					<h1>Acme</h1>
+					<section>
+						<article>
+							<h3><a href="/products/acme-one">Acme title</a></h3>
+							<a href="/products/acme-one">Acme image</a>
+							<span>4.0 (7)</span>
+						</article>
+						<article><a href="/listings/acme-two">Acme two</a><span>3.0 (1)</span></article>
+					</section>
+					<footer><ul>
+						<li><a href="https://dev.epicgames.com/community/fab">Support</a></li>
+						<li><a href="https://store.epicgames.com/en-US/">Epic Games Store</a></li>
+						<li><a href="https://www.unrealengine.com/en-US">Unreal Engine</a></li>
+						<li><a href="https://www.unrealengine.com/en-US/metahuman">MetaHuman</a></li>
+					</ul></footer>
+				</body>`,
+		}),
+	});
+	await flushExtensionWork();
+
+	expect(
+		page.document.querySelector(
+			"#better-fab-product-profile .better-fab-seller-profile-count",
+		)?.textContent,
+	).toBe("8 reviews across 2 packages");
+});
+
 test("seller metrics match a seller slug to its visible name", async () => {
 	const page = await loadProductPage({
 		fetchSeller: async () => ({ ok: false }),
@@ -240,6 +272,40 @@ test("seller metrics match a seller slug to its visible name", async () => {
 			".better-fab-seller-profile-count",
 		)?.textContent,
 	).toBe("7 reviews across 1 package");
+});
+
+test("seller metrics ignore live footer navigation and duplicate listing fragments", async () => {
+	const page = await loadProductPage({
+		fetchSeller: async () => ({ ok: false }),
+		html: `<!doctype html>
+			<body>
+				<main>
+					<h1>Acme Studio</h1>
+					<section>
+						<article>
+							<h3><a href="/products/acme-one">Acme title</a></h3>
+							<a href="/products/acme-one">Acme image</a>
+							<span>4.0 (7)</span>
+						</article>
+						<article><a href="/listings/acme-two">Acme two</a><span>3.0 (1)</span></article>
+					</section>
+					<footer><ul>
+						<li><a href="https://dev.epicgames.com/community/fab">Support</a></li>
+						<li><a href="https://store.epicgames.com/en-US/">Epic Games Store</a></li>
+						<li><a href="https://www.unrealengine.com/en-US">Unreal Engine</a></li>
+						<li><a href="https://www.unrealengine.com/en-US/metahuman">MetaHuman</a></li>
+					</ul></footer>
+				</main>
+			</body>`,
+		url: "https://www.fab.com/sellers/acme",
+	});
+	await flushExtensionWork();
+
+	expect(
+		page.document.querySelector(
+			".better-fab-seller-profile-count",
+		)?.textContent,
+	).toBe("8 reviews across 2 packages");
 });
 
 test("an old product request cannot add a profile after navigation", async () => {

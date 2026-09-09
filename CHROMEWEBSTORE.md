@@ -1,8 +1,8 @@
 # Chrome Web Store Listing — Better Fab
 
-> Current Package Version: 1.1.2
+> Current Package Version: 1.1.3
 >
-> Last Updated: 2026-07-15
+> Last Updated: 2026-09-09
 
 ## Store Listing
 
@@ -98,9 +98,10 @@ English
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
-| 1.1.2 | 2026-07-15 | Prevented Mass-Add detail-page navigation and corrected vendor package, review, and seller-identity aggregation on product and seller pages. | Current draft |
+| 1.1.3 | 2026-09-09 | Prevented subunit paid prices from being treated as free and corrected seller metrics for real listing routes, duplicate identities, partial rating data, and review totals. | Current draft |
+| 1.1.2 | 2026-07-15 | Prevented Mass-Add detail-page navigation and corrected vendor package, review, and seller-identity aggregation on product and seller pages. | Prior package |
 | 1.1.1 | 2026-07-11 | Patch release containing the completed Mass-Add safety, product lifecycle, popup persistence, badge ordering, modular runtime, regression coverage, deterministic packaging, and privacy-documentation improvements. | Prior package |
 | 1.1 | 2026-07-10 | Improved Mass-Add safety and result verification; fixed localized review counts, product-page lifecycle retries and cleanup, popup persistence error handling, and badge update ordering; modularized the runtime into fixture-backed Fab DOM, Seller Profile, Mass-Add, and processing modules; added reproducible release packaging and aligned privacy documentation. | Prior package |
 | 1.0 | 2026-06-24 | Initial release: Advanced filtering, ignored sellers, review count limits, rating sorting, automated mass-add for free items, and product page enhancements (seller metrics & auto-expand descriptions). | Superseded |
 
-> Release package: upload version 1.1.2. The manifest, store metadata, and generated archive filename are aligned to this patch version.
+> Release package: upload version 1.1.3. The manifest, store metadata, and generated archive filename are aligned to this patch version.

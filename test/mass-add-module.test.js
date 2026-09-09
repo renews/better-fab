@@ -57,12 +57,19 @@ function createSession({ wait = async () => {} } = {}) {
 	};
 }
 
-function createPaidLicenseSession({ closeWithEscape = false } = {}) {
+function createPaidLicenseSession({
+	cardPriceMarkup = "",
+	cardSearchText = "Free pack",
+	closeWithEscape = false,
+	confirmSelectedLicense = false,
+	licenseText = "Professional license $49.99",
+} = {}) {
 	const dom = new JSDOM(`<!doctype html>
 		<body>
 			<section>
 				<article id="card">
 					<a href="/products/free-pack">Free pack</a>
+					${cardPriceMarkup}
 					<button id="add">Add to library</button>
 				</article>
 			</section>
@@ -98,7 +105,7 @@ function createPaidLicenseSession({ closeWithEscape = false } = {}) {
 		modal.innerHTML = `
 			<h2 class="fabkit-Modal-title">Choose license tier</h2>
 			<div class="fabkit-FormField-root">
-				<label>Professional license $49.99</label>
+				<label>${licenseText}</label>
 			</div>
 			<div class="fabkit-Modal-actions"><button>Add</button></div>
 		`;
@@ -106,6 +113,10 @@ function createPaidLicenseSession({ closeWithEscape = false } = {}) {
 			"click",
 			() => {
 				modalAddCount += 1;
+				if (confirmSelectedLicense) {
+					action.setAttribute("aria-label", "In library");
+					modal.remove();
+				}
 			},
 		);
 		if (!closeWithEscape) {
@@ -137,7 +148,7 @@ function createPaidLicenseSession({ closeWithEscape = false } = {}) {
 	};
 	const session = moduleGlobal.BetterFabModules.massAdd.create({
 		document,
-		getCardMetrics: () => ({ searchText: "Free pack" }),
+		getCardMetrics: () => ({ searchText: cardSearchText }),
 		getSource: () => source,
 		hasSavedItemMarker: () => false,
 		isActive: () => true,
@@ -208,8 +219,29 @@ test("Mass-Add session owns its busy state", async () => {
 	expect(busyResult).toEqual({ error: "Already running" });
 });
 
-test("Mass-Add rejects a paid-only license modal and closes it", async () => {
-	const runtime = createPaidLicenseSession();
+test("Mass-Add rejects a subunit-priced card metadata value", async () => {
+	const runtime = createPaidLicenseSession({
+		cardPriceMarkup: '<span data-price="$0.99">$0.99</span>',
+		cardSearchText: "Starter pack",
+	});
+
+	const result = await runtime.session.run();
+
+	expect({
+		actionClickCount: runtime.actionClickCount,
+		modalPresent: runtime.modalPresent,
+		result,
+	}).toMatchObject({
+		actionClickCount: 0,
+		modalPresent: false,
+		result: { added: 0, attempted: 0 },
+	});
+});
+
+test("Mass-Add rejects a subunit-priced license modal and closes it", async () => {
+	const runtime = createPaidLicenseSession({
+		licenseText: "Professional license €0.50",
+	});
 
 	const result = await runtime.session.run();
 
@@ -225,6 +257,27 @@ test("Mass-Add rejects a paid-only license modal and closes it", async () => {
 		modalAddCount: 0,
 		modalPresent: false,
 		result: { added: 0, attempted: 1, skipped: 1 },
+	});
+});
+
+test("Mass-Add accepts exact-zero card metadata and license amounts", async () => {
+	const runtime = createPaidLicenseSession({
+		cardPriceMarkup: '<span data-price="$0.00">$0.00</span>',
+		cardSearchText: "Starter pack",
+		confirmSelectedLicense: true,
+		licenseText: "Personal license €0,00",
+	});
+
+	const result = await runtime.session.run();
+
+	expect({
+		actionClickCount: runtime.actionClickCount,
+		modalAddCount: runtime.modalAddCount,
+		result,
+	}).toMatchObject({
+		actionClickCount: 1,
+		modalAddCount: 1,
+		result: { added: 1, attempted: 1 },
 	});
 });
 

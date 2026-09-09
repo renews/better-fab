@@ -5,7 +5,46 @@
 	const LICENSE_MODAL_SELECTOR = 'div[role="dialog"][aria-modal="true"]';
 	const UNRELATED_LISTING_HEADING_PATTERN =
 		/\b(?:related|recommended|you may also like|more like this)\b/i;
+	const FAB_HOSTS = new Set(["fab.com", "www.fab.com"]);
+	const LISTING_PATH_PATTERN =
+		/^\/(?:(?:[a-z]{2}(?:-[a-z]{2,4})?)\/)?(?:products|listings|models|assets|items|plugins|environments|materials|characters|vehicles|weapons|props)\/[^/]+\/?$/i;
+	const SELLER_PATH_PATTERN = /^\/sellers\/[^/]+\/?$/i;
 	const listingNodeCardCache = new WeakMap();
+
+	function getFabUrl(href) {
+		const value = String(href || "").trim();
+		if (!value) return null;
+
+		try {
+			const url = new URL(value, "https://www.fab.com");
+			if (url.protocol !== "https:" || !FAB_HOSTS.has(url.hostname)) {
+				return null;
+			}
+			return url;
+		} catch (_error) {
+			return null;
+		}
+	}
+
+	function getListingPathname(href) {
+		const pathname = getFabUrl(href)?.pathname || "";
+		return LISTING_PATH_PATTERN.test(pathname) ? pathname : "";
+	}
+
+	function getListingIdentity(href) {
+		const pathname = getListingPathname(href);
+		if (!pathname) return "";
+
+		return pathname
+			.replace(/^\/[a-z]{2}(?:-[a-z]{2,4})?(?=\/)/i, "")
+			.replace(/\/+$/, "")
+			.toLowerCase();
+	}
+
+	function getSellerPathname(href) {
+		const pathname = getFabUrl(href)?.pathname || "";
+		return SELLER_PATH_PATTERN.test(pathname) ? pathname : "";
+	}
 
 	function getSellerNameFromPathname(pathname) {
 		const match = String(pathname || "").match(/^\/sellers\/([^/?#]+)/i);
@@ -21,51 +60,20 @@
 	}
 
 	function getSellerNameFromHref(href) {
-		const match = String(href || "").match(/\/sellers\/([^?#]+)/i);
-		if (!match) return "";
-		return getSellerNameFromPathname(`/sellers/${match[1]}`);
+		return getSellerNameFromPathname(getSellerPathname(href));
 	}
 
 	function isProductOrListingHref(href) {
-		if (!href) return false;
-		const lowerHref = String(href).toLowerCase();
-		if (
-			lowerHref.includes("/tags/") ||
-			lowerHref.includes("/category/") ||
-			lowerHref.includes("/channels/") ||
-			lowerHref.includes("/collections/") ||
-			lowerHref.includes("/sellers/") ||
-			lowerHref.includes("/about/") ||
-			lowerHref.includes("/search") ||
-			lowerHref.includes("/login") ||
-			lowerHref.includes("/cart") ||
-			lowerHref.includes("/library")
-		) {
-			return false;
-		}
+		return getListingPathname(href) !== "";
+	}
 
-		if (
-			/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i.test(
-				href,
-			)
-		) {
-			return true;
-		}
-		if (
-			/\/([a-z]{2}(?:-[a-zA-Z]{2,4})?\/)?(products|listings|models|assets|items|plugins|environments|materials|characters|vehicles|weapons|props)\//i.test(
-				href,
-			)
-		) {
-			return true;
-		}
-		if (/\/\d+-[a-z0-9-]+/i.test(href)) return true;
-
-		const path = String(href).split("?")[0].split("#")[0];
-		const segments = path.split("/").filter(Boolean);
+	function isNavigationHref(href) {
+		const value = String(href || "").trim().toLowerCase();
 		return (
-			segments.length >= 2 &&
-			!lowerHref.startsWith("javascript:") &&
-			!lowerHref.startsWith("mailto:")
+			value !== "" &&
+			!value.startsWith("#") &&
+			!value.startsWith("javascript:") &&
+			!value.startsWith("mailto:")
 		);
 	}
 
@@ -73,7 +81,9 @@
 		if (element?.tagName !== "A") return false;
 		const href = String(element.getAttribute("href") || "");
 		return (
-			isProductOrListingHref(href) || href.toLowerCase().includes("/sellers/")
+			isProductOrListingHref(href) ||
+			getSellerPathname(href) !== "" ||
+			isNavigationHref(href)
 		);
 	}
 
@@ -91,6 +101,10 @@
 		}
 
 		function getFirstListingHref(node) {
+			if (isProductOrListingLink(node)) {
+				return node.getAttribute("href") || "";
+			}
+
 			const links = node?.getElementsByTagName?.("a");
 			if (!links) return "";
 
@@ -158,12 +172,12 @@
 			while (node && node !== body && attempts < 16) {
 				const parent = node.parentElement;
 				if (parent && parent !== body && parent.children.length >= 2) {
-					const uniqueHrefs = new Set();
+					const uniqueListingIdentities = new Set();
 					for (const sibling of parent.children) {
 						const href = getFirstListingHref(sibling);
 						if (!href) continue;
-						uniqueHrefs.add(href.split("?")[0].split("#")[0]);
-						if (uniqueHrefs.size >= 2) {
+						uniqueListingIdentities.add(getListingIdentity(href));
+						if (uniqueListingIdentities.size >= 2) {
 							return cacheCard(listingNode, node);
 						}
 					}
@@ -243,6 +257,7 @@
 			addListingDescendantCards,
 			getCard,
 			getFirstListingHref,
+			getListingIdentity,
 			getListingDescendants,
 			getListingNodes,
 			getProductOrListingLinks,
@@ -264,6 +279,7 @@
 		create,
 		getSellerNameFromHref,
 		getSellerNameFromPathname,
+		getListingIdentity,
 		isMarketplaceNavigationLink,
 		isProductOrListingHref,
 	});

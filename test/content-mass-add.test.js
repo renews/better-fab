@@ -284,6 +284,23 @@ test("Mass-Add ignores a paid card with zero reviews and an Add to cart action",
 	expect(result).toMatchObject({ ok: true, attempted: 0, added: 0 });
 });
 
+test("Mass-Add ignores subunit-priced cards", async () => {
+	for (const price of ["$0.99", "€0.50", "Price: 0.99", "10.0 USD"]) {
+		const runtime = createContentRuntime(
+			`Premium Asset ${price}`,
+			"Add to library",
+		);
+		await runtime.load();
+
+		const result = await runtime.addFreeItems();
+
+		expect({ actionClickCount: runtime.action.clickCount, result }).toMatchObject({
+			actionClickCount: 0,
+			result: { added: 0, attempted: 0 },
+		});
+	}
+});
+
 test("Mass-Add never treats Add to cart as a library action", async () => {
 	const runtime = createContentRuntime("Free promotional asset", "Add to cart");
 	await runtime.load();

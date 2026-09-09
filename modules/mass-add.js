@@ -22,11 +22,10 @@
 		"mousemove",
 	];
 	const FREE_PRICE_PATTERNS = [
-		/\$\s*0(?:[.,]\d{1,2})?\b/i,
-		/\b0(?:[.,]\d{1,2})?\s*(?:usd|eur|gbp|aud|cad|nzd|brl|mxn|inr|jpy|krw|cny)\b/i,
-		/[$£€¥₹]\s*0(?:[.,]\d{1,2})?\b/i,
+		/[$£€¥₹]\s*0(?:[.,]0{1,2})?(?![\d.,])/i,
+		/(?<![\w.,])0(?:[.,]0{1,2})?(?![\d.,])\s*(?:usd|eur|gbp|aud|cad|nzd|brl|mxn|inr|jpy|krw|cny)\b/i,
 		/\b(?:free|gratis)\b/i,
-		/\bprice\s*(?:is|:)?\s*(?:free|0(?:[.,]\d{1,2})?)\b/i,
+		/\bprice\s*(?:is|:)?\s*(?:free|0(?:[.,]0{1,2})?(?![\d.,]))\b/i,
 		/\bno\s+cost\b/i,
 	];
 	const ADD_LIBRARY_TEXT_PATTERNS = [
@@ -107,9 +106,7 @@
 				if (hasFreePricePatternMatch(content)) return true;
 			}
 
-			return /\b\$\s*0(?:[.,]\d{1,2})?\b|\bfree\b/.test(
-				metrics.searchText || "",
-			);
+			return hasFreePricePatternMatch(metrics.searchText);
 		}
 
 		function randomDebounceDelayMs() {
@@ -523,10 +520,7 @@
 				const rect = card.getBoundingClientRect();
 				if (rect.width === 0 || rect.height === 0) continue;
 				const metrics = getCardMetrics(card);
-				if (
-					!hasFreePricePatternMatch(metrics.searchText) &&
-					!hasFreePriceFromCard(card, metrics)
-				) {
+				if (!hasFreePriceFromCard(card, metrics)) {
 					continue;
 				}
 				cards.push({ card });
