@@ -3,6 +3,7 @@
 	"private": true,
 	"scripts": {
 		"package": "bun run scripts/package-release.ts",
+		"package:firefox": "bun run scripts/package-release.ts --target firefox",
 		"test": "bun test"
 	},
 	"devDependencies": {

@@ -16,7 +16,7 @@ How to Use:
 Simply click the Better Fab icon in your browser toolbar while on Fab.com. Use the popup menu to configure your filters, manage your ignored sellers list, or trigger the “Add Displaying Free Items” automation.
 
 Privacy & Permissions:
-Better Fab requires access to Fab.com to apply its layout filters and automate button clicks on your behalf. All filtering configurations are stored locally on your device using Chrome’s local storage API. We do not track, collect, or transmit any of your personal data.
+Better Fab requires access to Fab.com to apply its layout filters and automate button clicks on your behalf. All filtering configurations are stored locally on your device using the browser storage API. We do not track, collect, or transmit any of your personal data.
 
 
 ## Credits and Inspiration
@@ -35,5 +35,6 @@ The source code for this extension is available at:
 - Install the development dependencies with `bun install`.
 - Run the regression suite with `bun test`.
 - Build the Chrome Web Store archive with `bun run package`.
+- Build the Firefox directory and archive with `bun run package:firefox`. See `FIREFOX.md` for loading and AMO submission.
 - See `CONTEXT.md` for the runtime module seams and domain terms.
 - See `CHANGELOG.md` for release history.
