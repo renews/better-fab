@@ -2,6 +2,13 @@
 
 All notable changes to Better Fab are documented in this file.
 
+## [1.1.4] - 2026-09-15
+
+### Fixed
+
+- Filtered AI-generated listings from the `Generated with AI` product detail field before displaying them.
+- Stored the seller name, rather than the `More from <seller>` product-page label, when ignoring a seller.
+
 ## [1.1.3] - 2026-09-09
 
 ### Fixed

@@ -35,7 +35,7 @@ const expectedArchiveFiles = [
 
 const expectedFirefoxManifest = {
 	manifest_version: 3,
-	version: "1.1.3",
+	version: "1.1.4",
 	background: { scripts: ["background.js"] },
 	browser_specific_settings: {
 		gecko: {
@@ -62,7 +62,7 @@ test("release command produces a lean deterministic Chrome Web Store archive", a
   await Bun.sleep(2_100);
   await runPackager(secondOutput);
 
-  const archiveName = "better-fab-release-1.1.3.zip";
+  const archiveName = "better-fab-release-1.1.4.zip";
   expect(await readdir(firstOutput)).toEqual([archiveName]);
   expect(await listArchive(join(firstOutput, archiveName))).toEqual(
     expectedArchiveFiles,
@@ -78,7 +78,7 @@ test("Firefox release command creates a loadable Firefox directory and archive",
 
 	await runFirefoxPackager(outputDirectory);
 
-	const archiveName = "better-fab-firefox-release-1.1.3.zip";
+	const archiveName = "better-fab-firefox-release-1.1.4.zip";
 	const firefoxDirectory = join(outputDirectory, "firefox");
 	expect(await readdir(outputDirectory)).toEqual([archiveName, "firefox"]);
 	expect(await listArchive(join(outputDirectory, archiveName))).toEqual(
@@ -214,7 +214,7 @@ test("release command preserves an existing archive when packaging fails", async
 
 test("release command works without system ZIP tools", async () => {
   const outputDirectory = await createTemporaryDirectory();
-  const archivePath = join(outputDirectory, "better-fab-release-1.1.3.zip");
+  const archivePath = join(outputDirectory, "better-fab-release-1.1.4.zip");
   const child = Bun.spawn(
     [process.execPath, "scripts/package-release.ts", "--output-dir", outputDirectory],
     {
@@ -244,13 +244,13 @@ test("release archive is reproducible across timezones", async () => {
 	await runPackager(utcOutput, { TZ: "UTC" });
 	await runPackager(localOutput, { TZ: "America/Sao_Paulo" });
 
-	const archiveName = "better-fab-release-1.1.3.zip";
+	const archiveName = "better-fab-release-1.1.4.zip";
 	expect(await hashFile(join(utcOutput, archiveName))).toBe(
 		await hashFile(join(localOutput, archiveName)),
 	);
 });
 
-test("release metadata declares patch version 1.1.3", async () => {
+test("release metadata declares patch version 1.1.4", async () => {
 	const manifest = await Bun.file(join(repositoryRoot, "manifest.json")).json();
 	const storeListing = await Bun.file(
 		join(repositoryRoot, "CHROMEWEBSTORE.md"),
@@ -259,10 +259,10 @@ test("release metadata declares patch version 1.1.3", async () => {
 		join(repositoryRoot, "CHANGELOG.md"),
 	).text();
 
-	expect(manifest.version).toBe("1.1.3");
-	expect(storeListing).toContain("Current Package Version: 1.1.3");
-	expect(storeListing).toContain("| 1.1.3 | 2026-09-09 |");
-	expect(changelog).toContain("## [1.1.3] - 2026-09-09");
+	expect(manifest.version).toBe("1.1.4");
+	expect(storeListing).toContain("Current Package Version: 1.1.4");
+	expect(storeListing).toContain("| 1.1.4 | 2026-09-15 |");
+	expect(changelog).toContain("## [1.1.4] - 2026-09-15");
 });
 
 async function createTemporaryDirectory(): Promise<string> {

@@ -9,7 +9,7 @@ bun run package:firefox
 ```
 
 Edit the root extension sources, then run the command to regenerate the
-loadable `firefox/` directory and `better-fab-firefox-release-1.1.3.zip`. Do
+loadable `firefox/` directory and `better-fab-firefox-release-1.1.4.zip`. Do
 not edit the generated runtime files in `firefox/`. The directory and archive
 contain the same extension runtime files. The Firefox manifest keeps the
 stable add-on ID `better-fab@renews`.
