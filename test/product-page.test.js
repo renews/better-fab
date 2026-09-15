@@ -49,6 +49,8 @@ function sellerMetricsResponse({ rating, reviews, slug }) {
 
 async function loadProductPage({
 	fetchSeller,
+	beforeLoad = () => {},
+	settings = {},
 	html = `<!doctype html>
 		<body>
 			<main>
@@ -58,13 +60,10 @@ async function loadProductPage({
 		</body>`,
 	url = "https://www.fab.com/products/example-product",
 }) {
-	const dom = new JSDOM(
-		html,
-		{
-			runScripts: "outside-only",
-			url,
-		},
-	);
+	const dom = new JSDOM(html, {
+		runScripts: "outside-only",
+		url,
+	});
 	openDoms.push(dom);
 
 	let mutationListener = null;
@@ -72,6 +71,7 @@ async function loadProductPage({
 	const { window } = dom;
 	window.fetch = fetchSeller;
 	window.console.error = () => {};
+	beforeLoad(window);
 	window.MutationObserver = class {
 		constructor(listener) {
 			mutationListener = listener;
@@ -95,6 +95,7 @@ async function loadProductPage({
 				get: async () => ({
 					extensionActive: true,
 					hiddenSellers: [],
+					...settings,
 				}),
 				set: async () => {},
 			},
@@ -144,7 +145,7 @@ test("product seller metrics retry after a non-OK response", async () => {
 
 test("product seller metrics retry after a failed request", async () => {
 	let requestCount = 0;
-	const page = await loadProductPage({
+	await loadProductPage({
 		fetchSeller: async () => {
 			requestCount += 1;
 			if (requestCount === 1) throw new Error("network unavailable");
@@ -268,9 +269,7 @@ test("seller metrics match a seller slug to its visible name", async () => {
 	await flushExtensionWork();
 
 	expect(
-		page.document.querySelector(
-			".better-fab-seller-profile-count",
-		)?.textContent,
+		page.document.querySelector(".better-fab-seller-profile-count")?.textContent,
 	).toBe("7 reviews across 1 package");
 });
 
@@ -302,9 +301,7 @@ test("seller metrics ignore live footer navigation and duplicate listing fragmen
 	await flushExtensionWork();
 
 	expect(
-		page.document.querySelector(
-			".better-fab-seller-profile-count",
-		)?.textContent,
+		page.document.querySelector(".better-fab-seller-profile-count")?.textContent,
 	).toBe("8 reviews across 2 packages");
 });
 
@@ -415,6 +412,116 @@ test("a pre-disable request cannot replace the re-enabled product profile", asyn
 	).toBe("2.0 / 5");
 });
 
+test("product listing seller buttons use the seller slug instead of the link label", async () => {
+	const page = await loadProductPage({
+		fetchSeller: async () => ({ ok: false }),
+		html: `<!doctype html>
+			<body>
+				<main>
+					<div class="fabkit-Stack-root"><h1>Example product</h1></div>
+					<section>
+						<h2>More from Acme</h2>
+						<article>
+							<a href="/products/acme-other">Another asset</a>
+							<a href="/sellers/acme">More from Acme</a>
+						</article>
+					</section>
+				</main>
+			</body>`,
+		url: "https://www.fab.com/products/example-product",
+	});
+	await flushExtensionWork();
+	await flushExtensionWork();
+
+	expect(
+		page.document.querySelector(".better-fab-ignore-seller-btn")?.dataset.seller,
+	).toBe("acme");
+});
+
+test("No AI filters a listing from its product detail metadata", async () => {
+	const requestedListings = [];
+	const page = await loadProductPage({
+		fetchSeller: async (href) => {
+			requestedListings.push(href);
+			return {
+				ok: true,
+				text: async () => `<!doctype html>
+					<body>
+						<aside>
+							<div class="fabkit-Typography-root">Generated with AI</div>
+							<div class="fabkit-Typography-root">Yes</div>
+						</aside>
+					</body>`,
+			};
+		},
+		settings: {
+			activeFilterPresets: { "no-ai": true },
+		},
+		html: `<!doctype html>
+			<body>
+				<main>
+					<article>
+						<a href="/products/acme-other">Another asset</a>
+						<a href="/sellers/acme">Acme</a>
+					</article>
+				</main>
+			</body>`,
+		url: "https://www.fab.com/search",
+	});
+	await flushExtensionWork();
+
+	expect({
+		hidden: page.document
+			.querySelector("article")
+			?.classList.contains("fab-hidden-item"),
+		requestedListings,
+	}).toEqual({
+		hidden: true,
+		requestedListings: ["/products/acme-other"],
+	});
+});
+
+test("No AI waits for product metadata before showing a listing", async () => {
+	const productResponse = deferred();
+	const page = await loadProductPage({
+		fetchSeller: () => productResponse.promise,
+		settings: {
+			activeFilterPresets: { "no-ai": true },
+		},
+		html: `<!doctype html>
+			<body>
+				<main>
+					<article>
+						<a href="/products/acme-other">Another asset</a>
+						<a href="/sellers/acme">Acme</a>
+					</article>
+				</main>
+			</body>`,
+		url: "https://www.fab.com/search",
+	});
+	await flushExtensionWork();
+
+	expect(
+		page.document.querySelector("article")?.classList.contains("fab-hidden-item"),
+	).toBe(true);
+
+	productResponse.resolve({
+		ok: true,
+		text: async () => `<!doctype html>
+			<body>
+				<aside>
+					<div class="fabkit-Typography-root">Generated with AI</div>
+					<div class="fabkit-Typography-root">No</div>
+				</aside>
+			</body>`,
+	});
+	await flushExtensionWork();
+
+	expect(
+		page.document.querySelector("article")?.classList.contains("fab-hidden-item"),
+	).toBe(false);
+});
+
 test("a storage change refreshes the existing product seller button", async () => {
 	const page = await loadProductPage({
 		fetchSeller: async () => ({ ok: false }),
@@ -481,7 +588,9 @@ test("a failed seller refresh removes the previous seller profile", async () => 
 				: { ok: false },
 	});
 	await flushExtensionWork();
-	expect(page.document.getElementById("better-fab-product-profile")).not.toBeNull();
+	expect(
+		page.document.getElementById("better-fab-product-profile"),
+	).not.toBeNull();
 
 	const sellerLink = page.document.querySelector('a[href^="/sellers/"]');
 	sellerLink.href = "/sellers/bravo";
@@ -545,8 +654,8 @@ test("a replaced product widget restores an already-rendered profile", async () 
 	await flushExtensionWork();
 
 	expect({
-		profileConnected:
-			page.document.getElementById("better-fab-product-profile")?.isConnected,
+		profileConnected: page.document.getElementById("better-fab-product-profile")
+			?.isConnected,
 		requestCount,
 	}).toEqual({ profileConnected: true, requestCount: 2 });
 });

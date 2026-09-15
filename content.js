@@ -88,7 +88,6 @@ let configuredQueryMatchCache = {
 };
 let extensionSettingsLoadAttempts = 0;
 
-
 const STAR_SORT_INDICATOR = /rating|reviews?|stars?/i;
 const STAR_SORT_QUERY_KEYS = [
 	"sort",
@@ -159,6 +158,8 @@ const EMPTY_ENTRIES = [];
 const EXTENSION_SETTINGS_LOAD_ATTEMPTS = 3;
 const EXTENSION_SETTINGS_RETRY_DELAY_MS = 250;
 const PRODUCT_SELLER_FETCH_ATTEMPTS = 2;
+const AI_GENERATED_DETAIL_LABEL = "generated with ai";
+const AI_GENERATED_DETAIL_STATUS_CACHE = new Map();
 
 function hasAiGeneratedKeywordMatch(searchText) {
 	for (const pattern of PRESET_KEYWORDS.ai) {
@@ -166,6 +167,56 @@ function hasAiGeneratedKeywordMatch(searchText) {
 	}
 
 	return PRESET_KEYWORDS.aiUrlOrLabel.test(searchText);
+}
+
+function isAiGeneratedProductDetail(document) {
+	for (const element of document.querySelectorAll("*")) {
+		if (element.textContent.trim().toLowerCase() !== AI_GENERATED_DETAIL_LABEL)
+			continue;
+
+		const value = element.nextElementSibling?.textContent.trim().toLowerCase();
+		if (value === "yes") return true;
+	}
+
+	return false;
+}
+
+function getCachedAiGeneratedProductStatus(productHref) {
+	const value = AI_GENERATED_DETAIL_STATUS_CACHE.get(productHref);
+	return typeof value === "boolean" ? value : null;
+}
+
+function verifyAiGeneratedProduct(card, productHref) {
+	const cached = AI_GENERATED_DETAIL_STATUS_CACHE.get(productHref);
+	if (cached === true) {
+		setCardHiddenState(card, true);
+		return;
+	}
+	if (cached !== undefined) return;
+
+	const request = fetch(productHref)
+		.then(async (response) => {
+			if (!response.ok) return null;
+			const document = new DOMParser().parseFromString(
+				await response.text(),
+				"text/html",
+			);
+			return isAiGeneratedProductDetail(document);
+		})
+		.catch(() => null);
+	AI_GENERATED_DETAIL_STATUS_CACHE.set(productHref, request);
+
+	void request.then((isAiGenerated) => {
+		if (isAiGenerated === null) {
+			AI_GENERATED_DETAIL_STATUS_CACHE.delete(productHref);
+		} else {
+			AI_GENERATED_DETAIL_STATUS_CACHE.set(productHref, isAiGenerated);
+		}
+
+		if (config.extensionActive && hasActivePreset("no-ai") && card.isConnected) {
+			setCardHiddenState(card, isAiGenerated === true);
+		}
+	});
 }
 
 const FILTER_PRESETS = [
@@ -417,7 +468,11 @@ let productRequestInFlightIdentity = null;
 let productRequestInFlightVersion = 0;
 let renderedProductIdentity = null;
 
-function isCurrentProductLifecycle(pathname, productIdentity, lifecycleVersion) {
+function isCurrentProductLifecycle(
+	pathname,
+	productIdentity,
+	lifecycleVersion,
+) {
 	return (
 		config.extensionActive &&
 		productPageLifecycleVersion === lifecycleVersion &&
@@ -450,7 +505,9 @@ async function processProductPage(pathname) {
 	const heading = document.querySelector("h1");
 	if (!heading) return;
 
-	let productWidgetContainer = document.getElementById("better-fab-product-widget");
+	let productWidgetContainer = document.getElementById(
+		"better-fab-product-widget",
+	);
 	if (!productWidgetContainer) {
 		productWidgetContainer = document.createElement("div");
 		productWidgetContainer.id = "better-fab-product-widget";
@@ -459,10 +516,14 @@ async function processProductPage(pathname) {
 		productWidgetContainer.style.lineHeight = "normal";
 		productWidgetContainer.style.marginTop = "8px";
 		productWidgetContainer.style.marginBottom = "8px";
-		
-		const targetBlock = heading.closest(".fabkit-Stack-root") || heading.parentElement;
+
+		const targetBlock =
+			heading.closest(".fabkit-Stack-root") || heading.parentElement;
 		if (targetBlock && targetBlock.parentElement) {
-			targetBlock.parentElement.insertBefore(productWidgetContainer, targetBlock.nextSibling);
+			targetBlock.parentElement.insertBefore(
+				productWidgetContainer,
+				targetBlock.nextSibling,
+			);
 			needsExtensionCleanup = true;
 		}
 	}
@@ -484,9 +545,7 @@ async function processProductPage(pathname) {
 	btn.dataset.seller = sellerName;
 	updateSellerPageIgnoreButton(btn, sellerName);
 
-	const existingProfile = document.getElementById(
-		"better-fab-product-profile",
-	);
+	const existingProfile = document.getElementById("better-fab-product-profile");
 	const hasRenderedProfile =
 		renderedProductIdentity === productIdentity &&
 		existingProfile?.parentElement === productWidgetContainer;
@@ -511,7 +570,9 @@ async function processProductPage(pathname) {
 		let response = null;
 		let fetchError = null;
 		for (let attempt = 0; attempt < PRODUCT_SELLER_FETCH_ATTEMPTS; attempt += 1) {
-			if (!isCurrentProductLifecycle(pathname, productIdentity, lifecycleVersion)) {
+			if (
+				!isCurrentProductLifecycle(pathname, productIdentity, lifecycleVersion)
+			) {
 				return;
 			}
 
@@ -534,7 +595,10 @@ async function processProductPage(pathname) {
 				lastProcessedProductIdentity = null;
 			}
 			if (fetchError) {
-				console.error("Failed to fetch seller metrics for product page", fetchError);
+				console.error(
+					"Failed to fetch seller metrics for product page",
+					fetchError,
+				);
 			}
 			return;
 		}
@@ -562,7 +626,7 @@ async function processProductPage(pathname) {
 			source: createFabDomAdapter(doc, sellerHref),
 		});
 		const profile = createSellerProfile();
-		
+
 		profile.style.marginTop = "16px";
 		profile.style.marginBottom = "16px";
 		profile.querySelector(SELLER_PAGE_BUTTON_SELECTOR)?.remove();
@@ -570,7 +634,7 @@ async function processProductPage(pathname) {
 		updateSellerProfileContent(profile, sellerProfile.presentation);
 
 		document.getElementById("better-fab-product-profile")?.remove();
-		
+
 		profile.id = "better-fab-product-profile";
 		const currentProductWidgetContainer = document.getElementById(
 			"better-fab-product-widget",
@@ -578,7 +642,9 @@ async function processProductPage(pathname) {
 		if (currentProductWidgetContainer?.isConnected) {
 			currentProductWidgetContainer.appendChild(profile);
 			renderedProductIdentity = productIdentity;
-		} else if (isCurrentProductLifecycle(pathname, productIdentity, lifecycleVersion)) {
+		} else if (
+			isCurrentProductLifecycle(pathname, productIdentity, lifecycleVersion)
+		) {
 			lastProcessedProductIdentity = null;
 		}
 	} catch (e) {
@@ -610,9 +676,13 @@ function getSellerLink(card) {
 
 function getSellerName(card, sellerLink = getSellerLink(card)) {
 	if (!sellerLink) return "";
+
+	const sellerLabel = sellerLink.textContent
+		.trim()
+		.toLowerCase()
+		.replace(/^more\s+from\s+/, "");
 	return (
-		sellerLink.textContent.trim().toLowerCase() ||
-		getSellerNameFromSellerHref(sellerLink.getAttribute("href"))
+		sellerLabel || getSellerNameFromSellerHref(sellerLink.getAttribute("href"))
 	);
 }
 
@@ -623,9 +693,7 @@ function getCardSellerInfo(card) {
 
 	const sellerLink = getSellerLink(card);
 	const info = {
-		sellerIdentity: getSellerNameFromSellerHref(
-			sellerLink?.getAttribute("href"),
-		),
+		sellerIdentity: getSellerNameFromSellerHref(sellerLink?.getAttribute("href")),
 		sellerLink,
 		sellerName: getSellerName(card, sellerLink),
 	};
@@ -735,10 +803,7 @@ function getListingDescendantNodes(root, limit = Number.POSITIVE_INFINITY) {
 }
 
 function addListingDescendantCards(root, changedCards) {
-	return createFabDomAdapter(root).addListingDescendantCards(
-		root,
-		changedCards,
-	);
+	return createFabDomAdapter(root).addListingDescendantCards(root, changedCards);
 }
 
 function isListingNodeElement(node) {
@@ -819,14 +884,13 @@ function getConfiguredSortMode() {
 	try {
 		const control = document.querySelector(config.starSortModeSelector);
 		return getSortModeFromControl(control);
-	} catch (err) {
+	} catch {
 		return "";
 	}
 }
 
 function isMinimumReviewsFilterTriggered(metrics) {
-	if (!config.minimumReviewCount || config.minimumReviewCount <= 0)
-		return false;
+	if (!config.minimumReviewCount || config.minimumReviewCount <= 0) return false;
 	if (metrics.reviewCount === null) return true;
 	return metrics.reviewCount < config.minimumReviewCount;
 }
@@ -993,7 +1057,7 @@ function ensureSellerProfile(isSellerPage, entries, allowProfileQuery = true) {
 	const profile = existingProfile || createSellerProfile();
 	if (!existingProfile) needsExtensionCleanup = true;
 	sellerProfileElement = profile;
-	
+
 	const button = profile.querySelector(SELLER_PAGE_BUTTON_SELECTOR);
 	const sellerProfile = SellerProfileModule.analyze({
 		entries,
@@ -1029,7 +1093,8 @@ function ensureSellerProfile(isSellerPage, entries, allowProfileQuery = true) {
 	if (!profile.isConnected) {
 		const heading = document.querySelector("h1");
 		if (heading) {
-			const targetBlock = heading.closest(".fabkit-Stack-root") || heading.parentElement;
+			const targetBlock =
+				heading.closest(".fabkit-Stack-root") || heading.parentElement;
 			if (targetBlock && targetBlock.parentElement) {
 				targetBlock.parentElement.insertBefore(profile, targetBlock.nextSibling);
 			}
@@ -1157,7 +1222,7 @@ function isConfiguredQueryMatchActive(
 		}
 		configuredQueryMatchCache = { signature, value: true };
 		return true;
-	} catch (err) {
+	} catch {
 		configuredQueryMatchCache = { signature, value: false };
 		return false;
 	}
@@ -1426,9 +1491,7 @@ function hasPotentialCardProcessingWork(
 	const showHideSellerButtons = config.showHideSellerButtons;
 	const resolvedPotentialStarSortWork =
 		potentialStarSortWork ??
-		(isSellerPage || showHideSellerButtons
-			? false
-			: hasPotentialStarSortWork());
+		(isSellerPage || showHideSellerButtons ? false : hasPotentialStarSortWork());
 	const cached = potentialCardProcessingWorkCache;
 	if (
 		cached.pathname === pathname &&
@@ -1534,6 +1597,8 @@ function processItems(
 	const shouldRunPresetFilters =
 		!shouldBypassFilters &&
 		(cardProcessingState.hasActivePresets ?? hasAnyActivePreset());
+	const shouldVerifyAiGeneratedProducts =
+		shouldRunPresetFilters && hasActivePreset("no-ai");
 	const shouldRunSellerFilter =
 		!shouldBypassFilters &&
 		!isSellerPage &&
@@ -1571,8 +1636,7 @@ function processItems(
 
 	const itemsToProcess = shouldProcessTargetCards ? targetCards : listingNodes;
 	const shouldUseItemHrefForMetrics =
-		!shouldProcessTargetCards &&
-		isProductOrListingLinkElement(listingNodes?.[0]);
+		!shouldProcessTargetCards && isProductOrListingLinkElement(listingNodes?.[0]);
 	let index = shouldCollectEntries ? 0 : null;
 
 	for (const item of itemsToProcess) {
@@ -1604,12 +1668,19 @@ function processItems(
 		const cachedFilterResult = shouldEvaluateHideState
 			? getCachedCardFilterResult(card, cardDomSignature, needsFullCardMetrics)
 			: null;
+		const productHref = shouldVerifyAiGeneratedProducts
+			? knownItemHref || getFirstProductOrListingHref(card)
+			: "";
+		const aiGeneratedProductStatus = productHref
+			? getCachedAiGeneratedProductStatus(productHref)
+			: null;
 		const metrics = needsFullCardMetrics
 			? cachedFilterResult?.metrics || getCardMetrics(card, knownItemHref)
 			: needsCardMetrics
 				? cachedFilterResult?.metrics || getCardSellerInfo(card)
 				: null;
 		let shouldHide = false;
+		let isWaitingForAiGeneratedVerification = false;
 
 		if (config.showHideSellerButtons) {
 			ensureIgnoreSellerButton(card, metrics.sellerName, metrics.sellerLink);
@@ -1618,11 +1689,22 @@ function processItems(
 		}
 
 		if (cachedFilterResult) {
-			shouldHide = cachedFilterResult.shouldHide;
+			shouldHide =
+				cachedFilterResult.shouldHide || aiGeneratedProductStatus === true;
+			if (!shouldHide && productHref && aiGeneratedProductStatus === null) {
+				isWaitingForAiGeneratedVerification = true;
+				verifyAiGeneratedProduct(card, productHref);
+			}
+			const displayShouldHide = shouldHide || isWaitingForAiGeneratedVerification;
 			if (shouldCollectEntries) {
-				entries.push({ card, metrics, index: entryIndex, shouldHide });
+				entries.push({
+					card,
+					metrics,
+					index: entryIndex,
+					shouldHide: displayShouldHide,
+				});
 			} else {
-				setCardHiddenState(card, shouldHide);
+				setCardHiddenState(card, displayShouldHide);
 			}
 			continue;
 		}
@@ -1651,6 +1733,13 @@ function processItems(
 			) {
 				shouldHide = true;
 			}
+
+			if (!shouldHide && aiGeneratedProductStatus === true) {
+				shouldHide = true;
+			} else if (!shouldHide && productHref && aiGeneratedProductStatus === null) {
+				isWaitingForAiGeneratedVerification = true;
+				verifyAiGeneratedProduct(card, productHref);
+			}
 		}
 
 		if (shouldEvaluateHideState) {
@@ -1662,10 +1751,16 @@ function processItems(
 				needsFullCardMetrics,
 			);
 		}
+		const displayShouldHide = shouldHide || isWaitingForAiGeneratedVerification;
 		if (shouldCollectEntries) {
-			entries.push({ card, metrics, index: entryIndex, shouldHide });
+			entries.push({
+				card,
+				metrics,
+				index: entryIndex,
+				shouldHide: displayShouldHide,
+			});
 		} else {
-			setCardHiddenState(card, shouldHide);
+			setCardHiddenState(card, displayShouldHide);
 		}
 	}
 
@@ -1692,7 +1787,6 @@ function processItems(
 	if (shouldCollectEntries && shouldApplyStarSort) {
 		applyStarReviewSort(entries);
 	}
-
 
 	markListingSetProcessed(currentListingSetSignature);
 }
@@ -1722,8 +1816,6 @@ const ProcessingCoordinator = ProcessingCoordinatorModule.create({
 	setTimer: setTimeout,
 });
 
-
-
 async function initializeExtension() {
 	extensionSettingsLoadAttempts += 1;
 	try {
@@ -1742,8 +1834,7 @@ async function initializeExtension() {
 			"extensionActive",
 		]);
 
-		if (data.filterActive !== undefined)
-			config.filterActive = data.filterActive;
+		if (data.filterActive !== undefined) config.filterActive = data.filterActive;
 		if (data.hiddenSellers !== undefined) setHiddenSellers(data.hiddenSellers);
 		if (data.applySellerFilterInLibrary !== undefined)
 			config.applySellerFilterInLibrary = data.applySellerFilterInLibrary;
@@ -1765,9 +1856,7 @@ async function initializeExtension() {
 				.trim()
 				.toLowerCase();
 		if (data.activeFilterPresets !== undefined) {
-			config.activeFilterPresets = sanitizePresetState(
-				data.activeFilterPresets,
-			);
+			config.activeFilterPresets = sanitizePresetState(data.activeFilterPresets);
 			refreshActiveFilterPresetCache();
 		}
 		if (data.extensionActive !== undefined) {
@@ -1827,8 +1916,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 		config.applySellerFilterInLibrary = request.applySellerFilterInLibrary;
 
 		noteChange(
-			config.applySavedFilterOnSellerPage !==
-				request.applySavedFilterOnSellerPage,
+			config.applySavedFilterOnSellerPage !== request.applySavedFilterOnSellerPage,
 		);
 		config.applySavedFilterOnSellerPage = request.applySavedFilterOnSellerPage;
 
@@ -1848,10 +1936,7 @@ chrome.runtime.onMessage.addListener((request, _sender, sendResponse) => {
 		config.sortStarsByReviewCount = request.sortStarsByReviewCount;
 
 		const nextShowHideSellerButtons = request.showHideSellerButtons !== false;
-		noteChange(
-			config.showHideSellerButtons !== nextShowHideSellerButtons,
-			false,
-		);
+		noteChange(config.showHideSellerButtons !== nextShowHideSellerButtons, false);
 		config.showHideSellerButtons = nextShowHideSellerButtons;
 
 		const nextActiveFilterPresets = sanitizePresetState(
@@ -1996,11 +2081,7 @@ function isBetterFabManagedNode(node) {
 
 function getRelevantMutationElement(node) {
 	const element = node instanceof Element ? node : node.parentElement;
-	if (
-		!element ||
-		element === document.body ||
-		isBetterFabManagedNode(element)
-	) {
+	if (!element || element === document.body || isBetterFabManagedNode(element)) {
 		return null;
 	}
 
@@ -2108,11 +2189,7 @@ const observer = new MutationObserver((mutations) => {
 		? false
 		: hasPotentialStarSortWork();
 	if (
-		!hasPotentialCardProcessingWork(
-			pathname,
-			potentialStarSortWork,
-			isSellerPage,
-		)
+		!hasPotentialCardProcessingWork(pathname, potentialStarSortWork, isSellerPage)
 	)
 		return;
 
