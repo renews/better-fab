@@ -1,6 +1,11 @@
 # better-fab
 Better Fab transforms your experience on the Epic Games Fab marketplace by giving you advanced tools to curate, filter, and automate your workflow.
 
+Install:
+
+- [Chrome Web Store](https://chromewebstore.google.com/detail/better-fab/bkdcflknedbfdlfkjmckpikgcheppkof)
+- [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/better-fab/)
+
 Features:
 
 - Filter out items from sellers you want to ignore.
