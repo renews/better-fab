@@ -1,0 +1,25 @@
+name: Validate
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bun run lint
+      - run: bun test
+      - run: bun run package --output-dir dist/chrome
+      - run: bun run package:firefox --output-dir dist/firefox
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: browser-packages
+          path: dist/**/*.zip
+          if-no-files-found: error

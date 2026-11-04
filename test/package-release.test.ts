@@ -80,7 +80,7 @@ test("Firefox release command creates a loadable Firefox directory and archive",
 
 	const archiveName = "better-fab-firefox-release-1.1.4.zip";
 	const firefoxDirectory = join(outputDirectory, "firefox");
-	expect(await readdir(outputDirectory)).toEqual([archiveName, "firefox"]);
+	expect((await readdir(outputDirectory)).sort()).toEqual([archiveName, "firefox"]);
 	expect(await listArchive(join(outputDirectory, archiveName))).toEqual(
 		expectedArchiveFiles,
 	);

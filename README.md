@@ -37,7 +37,9 @@ The source code for this extension is available at:
 
 ## Development
 
-- Install the development dependencies with `bun install`.
+- Use Bun 1.4.4 (the pinned development and CI runtime). If using Node with jsdom, its minimum supported releases are 22.22.2, 24.15.0, or 26.0.0.
+- Install the development dependencies with `bun install --frozen-lockfile`.
+- Check JavaScript and TypeScript syntax with `bun run lint`.
 - Run the regression suite with `bun test`.
 - Build the Chrome Web Store archive with `bun run package`.
 - Build the Firefox directory and archive with `bun run package:firefox`. See `FIREFOX.md` for loading and AMO submission.
